@@ -13,18 +13,41 @@ Files are re-read with a short TTL so a nightly pipeline run is picked up
 without a server restart.
 """
 
-import json, os, time
+import json, os, sys, time, subprocess
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-# Where the pipeline writes its outputs. On Fly this is the shared /data volume
-# so the API machine reads what the nightly pipeline machine wrote.
+# Where the pipeline writes its outputs. On Fly this is the /data volume, shared
+# in-process by the API and the nightly scheduler (single machine — Fly volumes
+# attach to one machine only, so API + cron live together).
 DATA_DIR = os.environ.get("DATA_DIR", SCRIPT_DIR)
 TTL = 300  # re-read JSON at most every 5 min
 
 app = FastAPI(title="Stock Data Pipeline API", version="1.0")
+
+
+@app.on_event("startup")
+def _start_scheduler():
+    """Run the nightly pipeline in-process so the API and cron share one machine
+    (and therefore one Fly volume). Enable with RUN_SCHEDULER=1; off by default
+    so local dev / tests don't kick off a full pipeline run."""
+    if os.environ.get("RUN_SCHEDULER") != "1":
+        return
+    from apscheduler.schedulers.background import BackgroundScheduler
+    from apscheduler.triggers.cron import CronTrigger
+
+    def _run_pipeline():
+        subprocess.run([sys.executable, os.path.join(SCRIPT_DIR, "run.py")],
+                       cwd=SCRIPT_DIR,
+                       env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+
+    sched = BackgroundScheduler(timezone="UTC")
+    sched.add_job(_run_pipeline, CronTrigger(hour=2, minute=0),
+                  id="nightly_pipeline", max_instances=1, coalesce=True)
+    sched.start()
+    app.state.scheduler = sched
 
 # Read-only data API → browser web clients need CORS. Allow all origins for now
 # (data is non-sensitive market data); tighten to the app domains before any

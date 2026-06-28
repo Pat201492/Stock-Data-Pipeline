@@ -21,6 +21,7 @@ Tracked items from the PR #1 review (commodities/options/API). Status updated as
 ## Cutover Phase 1 (deploy — in progress)
 - [x] Fly config for the data service: `Dockerfile` (uvicorn `api:app`), `fly.toml`, `.dockerignore`, `DEPLOY.md`.
 - [x] `DATA_DIR` env honored by `api.py`, `commodities.py`, `options.py` (shared `/data` volume).
+- [x] **Single-machine model** — API + in-process APScheduler cron (`RUN_SCHEDULER=1`) on one always-on machine, since Fly volumes attach to one machine only. (Was wrongly drawn as two machines sharing a volume.)
 - [ ] **Retrofit inherited collectors to `DATA_DIR`** — `universe.py`, `fundamentals.py`, `model.py`, `news.py`, `etf_universe.py` still write to their own folder; point them at `DATA_DIR` so the API on the volume sees full data.
 - [ ] Set real secrets in `fly secrets` (`FRED_API_KEY`, Google SA for sheets).
 - [ ] Schedule the nightly `run.py` machine; confirm old app's cron is OFF after cutover.
