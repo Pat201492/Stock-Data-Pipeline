@@ -4,7 +4,7 @@ Tracked items from the PR #1 review (commodities/options/API). Status updated as
 
 ## Fixed in PR #2 (review-followups)
 - [x] **#1 `chg_ytd` mislabeled** — was 1-year change. Now computes true YTD from the dated index (anchor = first close of current calendar year); also added explicit `chg_1y`. `commodities.py`.
-- [x] **#2 `iv_mean` polluted by garbage IV** — yfinance reports absurd IV on deep-ITM/far-OTM strikes. Now filtered to `0.01 < iv < 5.0` before averaging; ATM IV unaffected. `options.py`.
+- [x] **#2 `iv_mean` polluted by garbage IV** — yfinance reports absurd IV on the wings. `iv_mean` now averages only near-the-money strikes (±20% of spot) within a sane band (`0.01 < iv < 5.0`); ATM IV unaffected. Verified `1.15 → 0.69`. `options.py`.
 - [x] **#4 `fast_info.get` can raise / lose a ticker** — added fallback to last daily close (`history(period="1d")`) when fast_info has no price. `options.py`.
 - [x] **#5 No CORS** — added `CORSMiddleware` (GET, all origins for now) so browser web clients can read the API. `api.py`.
 - [x] **minor:** moved `import math` to module top in `commodities.py`.
