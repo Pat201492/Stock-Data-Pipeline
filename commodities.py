@@ -15,7 +15,7 @@ Run:      python commodities.py
 Schedule: nightly, after etf_universe (see run.py)
 """
 
-import json, os, warnings
+import json, os, math, warnings
 from datetime import datetime
 warnings.filterwarnings("ignore")
 
@@ -59,7 +59,6 @@ def _pct(a, b):
 
 def _realized_vol(closes):
     """Annualized 20-day realized vol from a close series (list of floats)."""
-    import math
     rets = [math.log(closes[i] / closes[i - 1])
             for i in range(1, len(closes)) if closes[i - 1] > 0]
     rets = rets[-20:]
@@ -72,13 +71,22 @@ def _realized_vol(closes):
 
 def _metrics_from_history(hist):
     """hist: pandas DataFrame with a Close column (1y daily). Returns metric dict."""
-    closes = [float(c) for c in hist["Close"].dropna().tolist()]
+    series = hist["Close"].dropna()
+    closes = [float(c) for c in series.tolist()]
     if not closes:
         return None
     price = closes[-1]
     n = len(closes)
     def back(days):
         return closes[-(days + 1)] if n > days else (closes[0] if closes else None)
+    # True YTD: anchor to the first close of the current calendar year (from the
+    # dated index), not the first row of the 1y window.
+    try:
+        this_year = series.index[-1].year
+        yr = series[series.index.year == this_year]
+        ytd_anchor = float(yr.iloc[0]) if len(yr) else closes[0]
+    except Exception:
+        ytd_anchor = closes[0]
     hi = max(closes); lo = min(closes)
     rng = ((price - lo) / (hi - lo) * 100) if hi > lo else None
     return {
@@ -86,7 +94,8 @@ def _metrics_from_history(hist):
         "chg_1d":     _pct(price, back(1)),
         "chg_1w":     _pct(price, back(5)),
         "chg_1m":     _pct(price, back(21)),
-        "chg_ytd":    _pct(price, closes[0]),
+        "chg_1y":     _pct(price, closes[0]),
+        "chg_ytd":    _pct(price, ytd_anchor),
         "high_52w":   round(hi, 4),
         "low_52w":    round(lo, 4),
         "range_pct":  round(rng, 1) if rng is not None else None,

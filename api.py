@@ -16,11 +16,22 @@ without a server restart.
 import json, os, time
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 TTL = 300  # re-read JSON at most every 5 min
 
 app = FastAPI(title="Stock Data Pipeline API", version="1.0")
+
+# Read-only data API → browser web clients need CORS. Allow all origins for now
+# (data is non-sensitive market data); tighten to the app domains before any
+# public deploy. See FOLLOWUPS.md.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["GET"],
+    allow_headers=["*"],
+)
 
 _cache = {}  # filename -> (expires, data)
 
