@@ -1,0 +1,38 @@
+# ── SECRETS — never commit ───────────────────────────────────────────────
+.env
+*.key
+*credentials*.json
+*service-account*.json
+stock-stracker-*.json        # Google service-account key for sheets.py
+
+# ── Generated databases (large, rebuilt by the pipeline) ─────────────────
+*.db
+*.sqlite
+*.sqlite3
+
+# ── Generated data outputs (produced by running the pipeline) ────────────
+# These are the DATA consumers read at runtime — shared via the runtime
+# datastore/volume, NOT via git. See README "Consuming the data".
+universe.json
+fundamentals.json
+model.json
+etf*.json
+deepdive*.json
+
+# ── Caches (safe-to-resume intermediate state) ───────────────────────────
+*_cache.json
+
+# ── Logs ─────────────────────────────────────────────────────────────────
+*.log
+run.log
+
+# ── Python ───────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# ── OS ───────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
