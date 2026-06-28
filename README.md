@@ -23,7 +23,7 @@ python run.py --from model    # resume from a stage (model + news)
 Pipeline order (each stage is incremental — only stale data is re-fetched):
 
 ```
-universe → fundamentals → model → news → etf_universe
+universe → fundamentals → model → news → etf_universe → commodities → options
 ```
 
 `scheduler.py` is the **Fly.io nightly wrapper** — a cron machine fires it ~2am UTC and it shells out to `run.py`. Same logic, hosted. Keep ONE collector (local daily run OR the Fly cron) to avoid double-collecting and double cost.
@@ -56,7 +56,29 @@ Shared modules: `database.py` (SQLAlchemy models — `stocks.db`), `politicians_
 
 These are **not** in git. They are produced by running the pipeline and shared with consumers at **runtime**.
 
-## Consuming the data — runtime sharing (decide one)
+## Data API (`api.py`) — the chosen sharing mechanism
+
+Read-only FastAPI service. Consumer apps are thin clients; this is the only
+data source. App-only concerns (auth, accounts, static pages) stay in the apps.
+
+```bash
+uvicorn api:app --port 8000
+```
+
+| Endpoint | Returns |
+|---|---|
+| `GET /health` | which output files exist |
+| `GET /api/stocks` | screener: merge of universe+fundamentals+model; filters `sector,cap_size,search,min_score,max_score`, `sort/order/limit/offset` |
+| `GET /api/stocks/{ticker}` | merged record for one ticker |
+| `GET /api/commodities` | all commodities grouped (energy/metals/ags) + metrics |
+| `GET /api/commodities/{root}` | one commodity (e.g. `GC=F`) |
+| `GET /api/options/{ticker}` | summary (ATM IV, put/call, OI) + expiration list |
+| `GET /api/options/{ticker}/{expiration}` | full calls/puts grid + Greeks |
+
+JSON outputs are re-read with a 5-min TTL, so a nightly run is picked up
+without a restart.
+
+## Consuming the data — runtime sharing (decided: API)
 | Model | How consumers read | Notes |
 |---|---|---|
 | **Service (API)** ⭐ | This repo also runs the FastAPI server; apps call `/api/...` | Cleanest. The old `server.py` API layer should migrate here. |

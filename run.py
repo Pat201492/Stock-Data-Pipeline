@@ -19,7 +19,8 @@ import argparse, subprocess, sys, os, time
 from datetime import datetime
 
 LOG_FILE = "run.log"
-SCRIPTS  = ["universe.py", "fundamentals.py", "model.py", "news.py", "etf_universe.py"]
+SCRIPTS  = ["universe.py", "fundamentals.py", "model.py", "news.py",
+            "etf_universe.py", "commodities.py", "options.py"]
 DIV      = "=" * 58
 
 
@@ -56,7 +57,8 @@ def parse_args():
     p = argparse.ArgumentParser(description="Stock Tracker pipeline runner")
     p.add_argument("--skip-universe",  action="store_true")
     p.add_argument("--from", dest="from_script", metavar="SCRIPT",
-                   choices=["universe", "fundamentals", "model", "news", "etf_universe"])
+                   choices=["universe", "fundamentals", "model", "news",
+                            "etf_universe", "commodities", "options"])
     return p.parse_args()
 
 

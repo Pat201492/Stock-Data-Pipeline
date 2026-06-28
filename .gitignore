@@ -18,6 +18,9 @@ fundamentals.json
 model.json
 etf*.json
 deepdive*.json
+commodities.json
+commodities_history.json
+options.json
 
 # ── Caches (safe-to-resume intermediate state) ───────────────────────────
 *_cache.json
