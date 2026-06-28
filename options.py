@@ -125,10 +125,19 @@ def _years_to_exp(exp_str):
 
 def _process_ticker(sym, r, q):
     tk = yf.Ticker(sym)
+    spot = None
     try:
-        spot = tk.fast_info.get("last_price") or tk.fast_info.get("lastPrice")
+        fi = tk.fast_info            # FastInfo object, not a plain dict
+        spot = fi.get("last_price") or fi.get("lastPrice")
     except Exception:
         spot = None
+    if not spot:                     # fallback: last daily close
+        try:
+            h = tk.history(period="1d")
+            if not h.empty:
+                spot = float(h["Close"].iloc[-1])
+        except Exception:
+            spot = None
     expirations = list(getattr(tk, "options", []) or [])[:MAX_EXP]
     if not expirations or not spot:
         return None
@@ -150,7 +159,11 @@ def _process_ticker(sym, r, q):
                 vol = _i(c.get("volume"))
                 if is_call: call_oi += oi; call_vol += vol
                 else:       put_oi += oi;  put_vol += vol
-                if iv > 0: all_ivs.append(iv)
+                # yfinance reports absurd IV on the wings; restrict iv_mean to
+                # near-the-money strikes (±20% of spot) in a sane band so it
+                # isn't polluted by deep-ITM/far-OTM garbage.
+                if 0.01 < iv < 5.0 and abs(K - spot) <= 0.20 * spot:
+                    all_ivs.append(iv)
                 greeks = black_scholes_greeks(spot, K, T, r, iv, q, is_call) if iv > 0 else {}
                 rows.append({
                     "type": "call" if is_call else "put",
