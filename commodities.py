@@ -28,8 +28,9 @@ except Exception:
     HAS_FRED = False
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-OUT        = os.path.join(SCRIPT_DIR, "commodities.json")
-HIST       = os.path.join(SCRIPT_DIR, "commodities_history.json")
+DATA_DIR   = os.environ.get("DATA_DIR", SCRIPT_DIR)  # /data volume on Fly
+OUT        = os.path.join(DATA_DIR, "commodities.json")
+HIST       = os.path.join(DATA_DIR, "commodities_history.json")
 
 # root: (display name, group, optional FRED overlay series for spot/official)
 COMMODITIES = {

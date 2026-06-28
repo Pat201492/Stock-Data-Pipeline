@@ -1,0 +1,39 @@
+# fly.toml — Stock Data Pipeline (data service: read-only API + nightly cron)
+# The single data source. Consumer apps (Stock-App, Trader-Screener) read this API.
+
+app = 'stock-data-pipeline-pat'
+primary_region = 'ewr'
+
+[build]
+
+[env]
+  PORT = "8080"
+  DATA_DIR = "/data"            # shared volume: JSON outputs + SQLite DBs
+  DB_PATH = "/data/stocks.db"
+  POL_DB_PATH = "/data/politicians.db"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0      # API scales to zero when idle (cost)
+  processes = ['app']
+
+  [[http_service.checks]]
+    grace_period = "30s"
+    interval = "30s"
+    method = "GET"
+    path = "/health"            # api.py health endpoint
+    timeout = "10s"
+
+# Shared volume — the nightly pipeline writes here, the API reads here.
+[[mounts]]
+  source = "pipeline_data"
+  destination = "/data"
+
+[[vm]]
+  memory = '1gb'
+  cpu_kind = 'shared'
+  cpus = 1
+  memory_mb = 1024

@@ -19,6 +19,9 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+# Where the pipeline writes its outputs. On Fly this is the shared /data volume
+# so the API machine reads what the nightly pipeline machine wrote.
+DATA_DIR = os.environ.get("DATA_DIR", SCRIPT_DIR)
 TTL = 300  # re-read JSON at most every 5 min
 
 app = FastAPI(title="Stock Data Pipeline API", version="1.0")
@@ -37,7 +40,7 @@ _cache = {}  # filename -> (expires, data)
 
 
 def _load(name):
-    path = os.path.join(SCRIPT_DIR, name)
+    path = os.path.join(DATA_DIR, name)
     hit = _cache.get(name)
     if hit and hit[0] > time.time():
         return hit[1]
@@ -60,7 +63,7 @@ def _rows(name, key="stocks"):
 
 @app.get("/health")
 def health():
-    have = {f: os.path.exists(os.path.join(SCRIPT_DIR, f))
+    have = {f: os.path.exists(os.path.join(DATA_DIR, f))
             for f in ("universe.json", "fundamentals.json", "model.json",
                       "commodities.json", "options.json")}
     return {"ok": True, "outputs": have}
