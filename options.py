@@ -26,9 +26,10 @@ warnings.filterwarnings("ignore")
 import yfinance as yf
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-OUT        = os.path.join(SCRIPT_DIR, "options.json")
-UNIVERSE   = os.path.join(SCRIPT_DIR, "universe.json")
-FUND       = os.path.join(SCRIPT_DIR, "fundamentals.json")
+DATA_DIR   = os.environ.get("DATA_DIR", SCRIPT_DIR)  # /data volume on Fly
+OUT        = os.path.join(DATA_DIR, "options.json")
+UNIVERSE   = os.path.join(DATA_DIR, "universe.json")
+FUND       = os.path.join(DATA_DIR, "fundamentals.json")
 
 TOP_N    = int(os.environ.get("OPTIONS_TOP_N", "25"))
 MAX_EXP  = int(os.environ.get("OPTIONS_MAX_EXP", "6"))

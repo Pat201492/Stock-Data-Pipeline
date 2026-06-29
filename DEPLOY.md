@@ -1,0 +1,68 @@
+# Deploy — Stock Data Pipeline on Fly.io
+
+**One always-on machine** serves the read-only API *and* runs the nightly
+pipeline in-process (APScheduler). Single machine because a Fly volume attaches
+to exactly one machine — so the API and the cron must live together to share
+`/data`.
+
+```
+   ┌──────────────────────────────────────────┐
+   │  Fly machine (always-on, min=1)           │
+   │   ├─ uvicorn api:app   → serves /api/...   │
+   │   └─ APScheduler 02:00 UTC → run.py        │
+   │            writes ↓        ↑ reads         │
+   │        ┌─────────────────────────┐         │
+   │        │  /data volume (*.json,  │         │
+   │        │  *.db)                  │         │
+   │        └─────────────────────────┘         │
+   └──────────────────────────────────────────┘
+```
+
+Still one collector — no second box. The machine stays up (shared-cpu-1x is
+cheap) because the in-process scheduler needs to be alive at 02:00 UTC.
+
+## First-time setup
+```bash
+fly launch --no-deploy --copy-config        # uses fly.toml; app = stock-data-pipeline-pat
+fly volumes create pipeline_data --size 2 --region ewr
+
+# Secrets (never commit):
+fly secrets set FRED_API_KEY=xxxxx
+# Google service-account JSON for sheets.py (if used):
+#   fly secrets set GOOGLE_SA_JSON="$(cat stock-stracker-*.json)"  # sheets.py reads it from env
+
+fly deploy
+fly status
+curl https://stock-data-pipeline-pat.fly.dev/health
+```
+
+`RUN_SCHEDULER=1` (set in fly.toml) turns on the in-process nightly run. To run
+the API without the cron (e.g. a read replica), deploy a second app config with
+`RUN_SCHEDULER` unset.
+
+## Local run
+```bash
+pip install -r requirements.txt
+export DATA_DIR=$(pwd)          # outputs land next to the code locally
+python run.py                   # daily update (universe → … → commodities → options)
+uvicorn api:app --port 8000     # serve the API (scheduler OFF unless RUN_SCHEDULER=1)
+```
+
+> **If you keep the daily run on your local machine** (instead of the Fly
+> scheduler): run `run.py` locally, then push the outputs to the Fly volume so
+> the API serves them — `fly ssh sftp shell` / `fly sftp put` into `/data`, or
+> switch the API to object storage. In that case leave `RUN_SCHEDULER` unset on
+> Fly. Pick ONE place to run the pipeline; don't double-collect.
+
+## ⚠️ Before this fully works — remaining Phase-1 task
+The API reads outputs from `DATA_DIR`. `api.py`, `commodities.py`, `options.py`
+already honor it. The **inherited collectors still write to their own folder**
+and must be pointed at `DATA_DIR` too, or the API on the volume sees partial data:
+
+- [ ] Retrofit `universe.py`, `fundamentals.py`, `model.py`, `news.py`,
+      `etf_universe.py` to write outputs under `DATA_DIR`. (`database.py` DB path
+      is already env-driven via `DB_PATH`/`POL_DB_PATH`.)
+- [ ] Decide JSON-on-volume vs DB-backed API reads (FOLLOWUPS.md). DBs already
+      land on `/data` via `DB_PATH`/`POL_DB_PATH`.
+- [ ] Set real secrets (`FRED_API_KEY`, Google SA) in `fly secrets`.
+- [ ] Confirm the OLD app's cron is OFF after cutover (no double-collect).

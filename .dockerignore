@@ -1,0 +1,33 @@
+# Secrets — never bake into the image
+stock-stracker-*.json
+*service-account*.json
+.env
+
+# Local DBs + caches (the volume provides these at runtime)
+*.db
+*.db-shm
+*.db-wal
+*_cache.json
+
+# Generated outputs (produced at runtime onto /data)
+universe.json
+fundamentals.json
+model.json
+etf*.json
+deepdive*.json
+commodities.json
+commodities_history.json
+options.json
+
+# Logs
+*.log
+run.log
+
+# Python / git
+__pycache__/
+*.pyc
+*.pyo
+.git
+.gitignore
+.venv/
+venv/
