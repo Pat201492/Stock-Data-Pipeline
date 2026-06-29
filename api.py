@@ -160,6 +160,18 @@ def get_stock(ticker: str):
     return merged
 
 
+# ── Per-stock commodity exposure ──────────────────────────────────────────────
+@app.get("/api/stocks/{ticker}/commodities")
+def stock_commodities(ticker: str):
+    """What commodities drive this stock — curated economic links + (optional)
+    computed return-regression betas."""
+    d = _load("exposure.json") or {}
+    rec = d.get(ticker.upper())
+    if not rec:
+        raise HTTPException(404, f"no commodity exposure mapped for {ticker.upper()}")
+    return {"ticker": ticker.upper(), **rec}
+
+
 # ── Commodities ───────────────────────────────────────────────────────────────
 @app.get("/api/commodities")
 def commodities():

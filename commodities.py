@@ -34,23 +34,40 @@ HIST       = os.path.join(DATA_DIR, "commodities_history.json")
 
 # root: (display name, group, optional FRED overlay series for spot/official)
 COMMODITIES = {
-    "CL=F": ("WTI Crude",     "Energy",      "DCOILWTICO"),
-    "BZ=F": ("Brent Crude",   "Energy",      "DCOILBRENTEU"),
-    "NG=F": ("Natural Gas",   "Energy",      "DHHNGSP"),
-    "RB=F": ("Gasoline",      "Energy",      None),
-    "HO=F": ("Heating Oil",   "Energy",      None),
-    "GC=F": ("Gold",          "Metals",      None),
-    "SI=F": ("Silver",        "Metals",      None),
-    "PL=F": ("Platinum",      "Metals",      None),
-    "PA=F": ("Palladium",     "Metals",      None),
-    "HG=F": ("Copper",        "Metals",      None),
-    "ZC=F": ("Corn",          "Agriculture", None),
-    "ZW=F": ("Wheat",         "Agriculture", None),
-    "ZS=F": ("Soybeans",      "Agriculture", None),
-    "KC=F": ("Coffee",        "Agriculture", None),
-    "SB=F": ("Sugar",         "Agriculture", None),
-    "CT=F": ("Cotton",        "Agriculture", None),
-    "LE=F": ("Live Cattle",   "Agriculture", None),
+    # Energy
+    "CL=F":  ("WTI Crude",     "Energy",      "DCOILWTICO"),
+    "BZ=F":  ("Brent Crude",   "Energy",      "DCOILBRENTEU"),
+    "NG=F":  ("Natural Gas",   "Energy",      "DHHNGSP"),
+    "RB=F":  ("Gasoline",      "Energy",      None),
+    "HO=F":  ("Heating Oil",   "Energy",      None),
+    # Metals
+    "GC=F":  ("Gold",          "Metals",      None),
+    "SI=F":  ("Silver",        "Metals",      None),
+    "PL=F":  ("Platinum",      "Metals",      None),
+    "PA=F":  ("Palladium",     "Metals",      None),
+    "HG=F":  ("Copper",        "Metals",      None),
+    "ALI=F": ("Aluminum",      "Metals",      None),   # thinner on yfinance
+    # Agriculture — grains & softs
+    "ZC=F":  ("Corn",          "Agriculture", None),
+    "ZW=F":  ("Wheat",         "Agriculture", None),
+    "KE=F":  ("KC HRW Wheat",  "Agriculture", None),   # thinner on yfinance
+    "RS=F":  ("Canola",        "Agriculture", None),   # thinner on yfinance
+    "DC=F":  ("Milk (Class III)","Agriculture", None), # thinner on yfinance
+    "ZS=F":  ("Soybeans",      "Agriculture", None),
+    "ZL=F":  ("Soybean Oil",   "Agriculture", None),
+    "ZM=F":  ("Soybean Meal",  "Agriculture", None),
+    "ZO=F":  ("Oats",          "Agriculture", None),
+    "ZR=F":  ("Rough Rice",    "Agriculture", None),
+    "KC=F":  ("Coffee",        "Agriculture", None),
+    "SB=F":  ("Sugar",         "Agriculture", None),
+    "CC=F":  ("Cocoa",         "Agriculture", None),
+    "CT=F":  ("Cotton",        "Agriculture", None),
+    "OJ=F":  ("Orange Juice",  "Agriculture", None),   # thinner on yfinance
+    "LBS=F": ("Lumber",        "Agriculture", None),   # thinner on yfinance
+    # Livestock
+    "LE=F":  ("Live Cattle",   "Livestock",   None),
+    "GF=F":  ("Feeder Cattle", "Livestock",   None),
+    "HE=F":  ("Lean Hogs",     "Livestock",   None),
 }
 
 
@@ -138,6 +155,13 @@ def main():
             row["fred"] = overlay  # official spot + change + sparkline
         snapshot.append(row)
         print(f"  {name:<14} {m['price']:>10}  1d {str(m['chg_1d']):>6}%  vol {m['vol_20d']}")
+
+    # Guard: never clobber a good output with an empty one (e.g. a yfinance rate
+    # limit fails every download). Leave the last snapshot in place and bail.
+    if not snapshot:
+        print("\n⚠️  0 commodities fetched (rate-limited or all delisted?) — "
+              "keeping existing commodities.json, not overwriting.")
+        return
 
     # group for the dashboard cards
     grouped = {}

@@ -21,6 +21,7 @@ deepdive*.json
 commodities.json
 commodities_history.json
 options.json
+exposure.json
 
 # ── Caches (safe-to-resume intermediate state) ───────────────────────────
 *_cache.json
