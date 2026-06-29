@@ -76,7 +76,6 @@ CURATED_EXPOSURE = {
     "FANG": [("CL=F","output",+1,"crude"), ("NG=F","output",+1,"natural gas")],
     "CTRA": [("NG=F","output",+1,"natural gas"), ("CL=F","output",+1,"crude")],
     "APA":  [("CL=F","output",+1,"crude"), ("NG=F","output",+1,"natural gas")],
-    "MRO":  [("CL=F","output",+1,"crude"), ("NG=F","output",+1,"natural gas")],
     # More refiners
     "PBF":  [("CL=F","input",-1,"crude feedstock"), ("RB=F","output",+1,"gasoline"), ("HO=F","output",+1,"distillate")],
     "DK":   [("CL=F","input",-1,"crude feedstock"), ("RB=F","output",+1,"gasoline"), ("HO=F","output",+1,"distillate")],
