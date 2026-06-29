@@ -54,15 +54,15 @@ uvicorn api:app --port 8000     # serve the API (scheduler OFF unless RUN_SCHEDU
 > switch the API to object storage. In that case leave `RUN_SCHEDULER` unset on
 > Fly. Pick ONE place to run the pipeline; don't double-collect.
 
-## ⚠️ Before this fully works — remaining Phase-1 task
-The API reads outputs from `DATA_DIR`. `api.py`, `commodities.py`, `options.py`
-already honor it. The **inherited collectors still write to their own folder**
-and must be pointed at `DATA_DIR` too, or the API on the volume sees partial data:
+## Data paths
+All collectors honor `DATA_DIR` (default = code folder; `/data` on Fly):
+`universe.py`, `fundamentals.py`, `model.py`, `etf_universe.py`, `commodities.py`,
+`options.py` read/write/cache there; `news.py` is DB-only (`DB_PATH` on `/data`).
+So a full `run.py` writes everything to the volume the API serves.
 
-- [ ] Retrofit `universe.py`, `fundamentals.py`, `model.py`, `news.py`,
-      `etf_universe.py` to write outputs under `DATA_DIR`. (`database.py` DB path
-      is already env-driven via `DB_PATH`/`POL_DB_PATH`.)
-- [ ] Decide JSON-on-volume vs DB-backed API reads (FOLLOWUPS.md). DBs already
-      land on `/data` via `DB_PATH`/`POL_DB_PATH`.
+## ⚠️ Remaining before go-live
 - [ ] Set real secrets (`FRED_API_KEY`, Google SA) in `fly secrets`.
+- [ ] First deploy + first `run.py` (cold volume → API returns 503/empty until
+      the first nightly completes; trigger once manually if needed).
 - [ ] Confirm the OLD app's cron is OFF after cutover (no double-collect).
+- [ ] (Optional) JSON-on-volume vs DB-backed API reads — see FOLLOWUPS.md.

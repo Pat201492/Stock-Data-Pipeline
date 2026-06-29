@@ -32,7 +32,7 @@ Run:      python3 model.py
 Schedule: 0 5 * * 1-5
 """
 
-import json, time, math, warnings
+import json, os, time, math, warnings
 from datetime import datetime
 from collections import defaultdict
 warnings.filterwarnings("ignore")
@@ -41,9 +41,10 @@ import numpy as np
 import yfinance as yf
 from data_utils import sf, fmt, ratio, load_cache, save_cache, run_batches, score_stock
 
-FUNDAMENTALS_FILE = "fundamentals.json"
-CACHE_FILE        = "model_cache.json"
-OUTPUT_FILE       = "model.json"
+DATA_DIR          = os.environ.get("DATA_DIR") or os.path.dirname(os.path.abspath(__file__))
+FUNDAMENTALS_FILE = os.path.join(DATA_DIR, "fundamentals.json")
+CACHE_FILE        = os.path.join(DATA_DIR, "model_cache.json")
+OUTPUT_FILE       = os.path.join(DATA_DIR, "model.json")
 
 BATCH_SIZE  = 50
 SLEEP_SEC   = 2

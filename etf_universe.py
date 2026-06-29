@@ -18,7 +18,8 @@ warnings.filterwarnings("ignore")
 import yfinance as yf
 from database import SessionLocal, ETF, ETFHolding, Valuation, init_db, upsert
 
-CACHE_FILE  = "etf_cache.json"
+DATA_DIR    = os.environ.get("DATA_DIR") or os.path.dirname(os.path.abspath(__file__))
+CACHE_FILE  = os.path.join(DATA_DIR, "etf_cache.json")
 SLEEP_SEC   = 1.0
 STALE_DAYS  = 7
 

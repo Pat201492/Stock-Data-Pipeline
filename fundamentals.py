@@ -15,7 +15,7 @@ Run:      python3 fundamentals.py
 Schedule: 0 2 * * 1-5   (weeknights 2am)
 """
 
-import json, time, warnings
+import json, os, time, warnings
 from datetime import datetime
 warnings.filterwarnings("ignore")
 
@@ -27,9 +27,10 @@ from data_utils import (
     load_cache, save_cache, run_batches,
 )
 
-UNIVERSE_FILE = "universe.json"
-CACHE_FILE    = "fundamentals_cache.json"
-OUTPUT_FILE   = "fundamentals.json"
+DATA_DIR      = os.environ.get("DATA_DIR") or os.path.dirname(os.path.abspath(__file__))
+UNIVERSE_FILE = os.path.join(DATA_DIR, "universe.json")
+CACHE_FILE    = os.path.join(DATA_DIR, "fundamentals_cache.json")
+OUTPUT_FILE   = os.path.join(DATA_DIR, "fundamentals.json")
 BATCH_SIZE    = 20
 SLEEP_SEC     = 3
 MAX_RETRIES   = 2
