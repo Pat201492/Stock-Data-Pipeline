@@ -26,6 +26,13 @@ Tracked items from the PR #1 review (commodities/options/API). Status updated as
 - [ ] Set real secrets in `fly secrets` (`FRED_API_KEY`, Google SA for sheets).
 - [ ] Schedule the nightly `run.py` machine; confirm old app's cron is OFF after cutover.
 
+## Commodity exposure + yfinance rate-limit (new)
+- [x] **Per-stock commodity exposure** — `commodity_exposure.py` (curated map, 60 tickers) + `GET /api/stocks/{ticker}/commodities`. Curated runs with no network.
+- [x] **Commodities expanded to ~30** + Livestock group; no-clobber guard on empty fetch.
+- [ ] **Computed exposure betas** — `EXPOSURE_COMPUTE=1 python commodity_exposure.py`; pending a yfinance cooldown.
+- [ ] **yfinance rate-limit hardening** — a full from-scratch `run.py` exhausts yfinance: universe came back partial (539 vs 2500 target) and commodities/options got 429'd to empty. Need: throttle/backoff + longer sleeps, or run universe separately from the daily refresh, or a paid feed. Re-run incrementally (caches exist) to fill the universe.
+- [ ] **Never run two yfinance collectors at once** (caused the first 429) — consider a file lock.
+
 ## Related (other repos)
 - [ ] Cutover phases 1–5 — see Trader-Screener `CUTOVER.md`.
 - [ ] Wire Trader-Screener mobile client to `/api/...` endpoints.
