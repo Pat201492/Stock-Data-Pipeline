@@ -145,7 +145,8 @@ def _process_ticker(sym, r, q):
 
     exp_out, all_ivs, call_oi, put_oi, call_vol, put_vol = [], [], 0, 0, 0, 0
     atm_iv = None
-    for exp in expirations:
+    atm_dist = None          # |strike - spot| of the current ATM pick (nearest expiry)
+    for exp_idx, exp in enumerate(expirations):
         try:
             chain = tk.option_chain(exp)
         except Exception:
@@ -178,9 +179,14 @@ def _process_ticker(sym, r, q):
                     "itm": bool(c.get("inTheMoney")),
                     **greeks,
                 })
-                # ATM IV = IV of the strike nearest spot on the nearest expiry
-                if atm_iv is None and abs(K - spot) <= 0.03 * spot and iv > 0:
-                    atm_iv = round(iv, 4)
+                # ATM IV = IV of the strike strictly NEAREST spot on the nearest
+                # expiry, among sane-IV contracts (avoids junk near-zero IV that
+                # a "first within 3%" pick would grab).
+                if exp_idx == 0 and 0.01 < iv < 5.0:
+                    d = abs(K - spot)
+                    if atm_dist is None or d < atm_dist:
+                        atm_dist = d
+                        atm_iv = round(iv, 4)
         exp_out.append({"expiration": exp, "t_years": round(T, 4), "contracts": rows})
 
     summary = {

@@ -10,7 +10,7 @@ Tracked items from the PR #1 review (commodities/options/API). Status updated as
 - [x] **minor:** moved `import math` to module top in `commodities.py`.
 
 ## Deferred (not yet done)
-- [ ] **#3 ATM IV picks call-side first within 3% band** — if multiple strikes sit inside the band it grabs the first iterated (a call), not the strike strictly nearest spot. Low-impact approximation. Fix: choose `min(abs(K-spot))` across both call+put.
+- [x] **#3 ATM IV nearest-strike** — now picks the strike strictly nearest spot (min `|K-spot|`) among sane-IV contracts on the nearest expiry, across calls+puts. Fixed real-data `ATM IV 0.0` on GOOGL/AMZN (junk near-zero IV the old "first within 3%" pick grabbed).
 - [ ] **CORS tightening** — `allow_origins=["*"]` is fine for a private deploy; restrict to the app domains before any public exposure.
 - [ ] **API auth / rate-limit** — read-only and serves all data; intended as a private data service. Add auth/limits if ever exposed publicly. (Cutover hosting decision.)
 - [ ] **Bad `sort` field on `/api/stocks`** silently no-ops (all-None sort). Could return `400` instead. Low.
