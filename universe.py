@@ -30,8 +30,9 @@ warnings.filterwarnings("ignore")
 
 import yfinance as yf
 
-OUTPUT_FILE  = "universe.json"
-CACHE_FILE   = "universe_cache.json"
+DATA_DIR     = os.environ.get("DATA_DIR") or os.path.dirname(os.path.abspath(__file__))
+OUTPUT_FILE  = os.path.join(DATA_DIR, "universe.json")
+CACHE_FILE   = os.path.join(DATA_DIR, "universe_cache.json")
 TARGET       = 2500
 ENRICH_BATCH = 50
 SLEEP_SEC    = 2
