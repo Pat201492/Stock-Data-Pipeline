@@ -32,7 +32,11 @@ app = FastAPI(title="Stock Data Pipeline API", version="1.0")
 def _start_scheduler():
     """Run the nightly pipeline in-process so the API and cron share one machine
     (and therefore one Fly volume). Enable with RUN_SCHEDULER=1; off by default
-    so local dev / tests don't kick off a full pipeline run."""
+    so local dev / tests don't kick off a full pipeline run.
+
+    NOTE: run a SINGLE uvicorn worker when RUN_SCHEDULER=1 — every worker process
+    executes this hook, so N workers would fire the pipeline N times concurrently
+    (double-collect + DB contention). The Dockerfile CMD uses one worker."""
     if os.environ.get("RUN_SCHEDULER") != "1":
         return
     from apscheduler.schedulers.background import BackgroundScheduler

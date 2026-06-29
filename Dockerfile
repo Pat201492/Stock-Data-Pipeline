@@ -19,7 +19,7 @@ ENV DATA_DIR=/data
 
 EXPOSE 8080
 
-# Single process: the API serves /api/... and, with RUN_SCHEDULER=1, also runs
-# the nightly pipeline in-process (APScheduler) so one machine owns the volume.
-# Shell form so ${PORT} from fly.toml is honored.
-CMD uvicorn api:app --host 0.0.0.0 --port ${PORT:-8080}
+# Single process, single worker (RUN_SCHEDULER must see exactly one scheduler —
+# multiple workers would fire the nightly pipeline N times). `exec` so SIGTERM
+# from Fly reaches uvicorn for a graceful shutdown; ${PORT} from fly.toml honored.
+CMD ["sh", "-c", "exec uvicorn api:app --host 0.0.0.0 --port ${PORT:-8080}"]
