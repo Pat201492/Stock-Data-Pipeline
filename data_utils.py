@@ -13,7 +13,7 @@ Provides:
   - Data quality scoring      data_quality_score
 """
 
-import json, math, time
+import json, math, time, os
 
 
 # ── Numeric safety ────────────────────────────────────────────────────────────
@@ -122,6 +122,12 @@ def run_batches(items, fetch_fn, cache, cache_path,
     -------
     cache (mutated in-place, also returned for convenience)
     """
+    # Env-tunable pacing — slow down to avoid yfinance rate limits on big runs.
+    sleep_sec   = float(os.environ.get("YF_SLEEP", sleep_sec))
+    batch_size  = int(os.environ.get("YF_BATCH", batch_size))
+    max_retries = int(os.environ.get("YF_RETRIES", max_retries))
+    backoff     = float(os.environ.get("YF_BACKOFF", 45))  # hard sleep on a rate-limit signal
+
     need  = [t for t in items if t not in cache]
     if not need:
         print(f"  All {len(items)} already in cache — skipping fetch")
@@ -130,7 +136,7 @@ def run_batches(items, fetch_fn, cache, cache_path,
     total  = len(need)
     pages  = (total + batch_size - 1) // batch_size
     failed = []
-    print(f"  {total} to fetch ({pages} batches of {batch_size})")
+    print(f"  {total} to fetch ({pages} batches of {batch_size}, sleep {sleep_sec}s)")
 
     for i in range(0, total, batch_size):
         batch  = need[i:i + batch_size]
@@ -143,14 +149,21 @@ def run_batches(items, fetch_fn, cache, cache_path,
         cache.update(results)
         failed.extend(errs)
         save_cache(cache, cache_path)
-        time.sleep(sleep_sec)
+        # A whole batch failing is the rate-limit signal — back off hard so the
+        # rest of the run isn't lost (this is what wiped commodities/options).
+        if errs and len(errs) == len(batch):
+            print(f"    ⚠️  batch {page} fully failed — backing off {backoff}s (rate limit?)")
+            time.sleep(backoff)
+        else:
+            time.sleep(sleep_sec)
 
-    # Retry pass
+    # Retry pass — longer pause first, the failures are usually rate-limit driven
     for attempt in range(max_retries):
         if not failed:
             break
         failed = list(set(failed))
-        print(f"  Retry pass {attempt+1}: {len(failed)} tickers")
+        print(f"  Retry pass {attempt+1}: {len(failed)} tickers (waiting {backoff}s first)")
+        time.sleep(backoff)
         next_failed = []
         for i in range(0, len(failed), batch_size):
             results, errs = fetch_fn(failed[i:i + batch_size])

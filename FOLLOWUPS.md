@@ -30,7 +30,9 @@ Tracked items from the PR #1 review (commodities/options/API). Status updated as
 - [x] **Per-stock commodity exposure** — `commodity_exposure.py` (curated map, 60 tickers) + `GET /api/stocks/{ticker}/commodities`. Curated runs with no network.
 - [x] **Commodities expanded to ~30** + Livestock group; no-clobber guard on empty fetch.
 - [ ] **Computed exposure betas** — `EXPOSURE_COMPUTE=1 python commodity_exposure.py`; pending a yfinance cooldown.
-- [ ] **yfinance rate-limit hardening** — a full from-scratch `run.py` exhausts yfinance: universe came back partial (539 vs 2500 target) and commodities/options got 429'd to empty. Need: throttle/backoff + longer sleeps, or run universe separately from the daily refresh, or a paid feed. Re-run incrementally (caches exist) to fill the universe.
+- [x] **yfinance rate-limit hardening** — `run_batches` (fundamentals/model) and universe enrich now: env-tunable pacing (`YF_SLEEP`/`YF_BATCH`/`YF_RETRIES`/`YF_BACKOFF`) + a **hard backoff when a whole batch fails** (the rate-limit signal) so the rest of the run isn't lost, + a wait before retry passes. Run big jobs with e.g. `YF_SLEEP=4 YF_BATCH=30`.
+- [ ] commodities.py / options.py use `yf.download` directly (not `run_batches`) — add the same backoff if they keep 429'ing.
+- [ ] Re-run incrementally (caches exist) to fill universe toward 2500.
 - [ ] **Never run two yfinance collectors at once** (caused the first 429) — consider a file lock.
 
 ## Related (other repos)
