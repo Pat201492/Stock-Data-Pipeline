@@ -34,8 +34,10 @@ DATA_DIR     = os.environ.get("DATA_DIR") or os.path.dirname(os.path.abspath(__f
 OUTPUT_FILE  = os.path.join(DATA_DIR, "universe.json")
 CACHE_FILE   = os.path.join(DATA_DIR, "universe_cache.json")
 TARGET       = 2500
-ENRICH_BATCH = 50
-SLEEP_SEC    = 2
+# Env-tunable pacing — slow down to dodge yfinance rate limits on big runs.
+ENRICH_BATCH = int(os.environ.get("YF_BATCH", 50))
+SLEEP_SEC    = float(os.environ.get("YF_SLEEP", 2))
+YF_BACKOFF   = float(os.environ.get("YF_BACKOFF", 45))  # hard sleep on rate-limit signal
 MAX_RETRIES  = 3
 STALE_DAYS   = 7   # re-enrich if DB record older than this
 
@@ -423,14 +425,22 @@ def enrich(tickers, cache):
         page  = i // ENRICH_BATCH + 1
         if page == 1 or page % 10 == 0 or page == pages:
             print(f"    Batch {page:>4}/{pages}  ({i+1}–{min(i+ENRICH_BATCH, total)})  {round(i/total*100)}%")
-        failed.extend(_enrich_batch(batch, cache))
+        batch_failed = _enrich_batch(batch, cache)
+        failed.extend(batch_failed)
         save_cache(cache)
-        time.sleep(SLEEP_SEC)
+        # Whole batch failing is the rate-limit signal — back off hard so the
+        # rest of the universe isn't lost (this is why we only got 539/2500).
+        if batch_failed and len(batch_failed) == len(batch):
+            print(f"    ⚠️  batch {page} fully failed — backing off {YF_BACKOFF}s (rate limit?)")
+            time.sleep(YF_BACKOFF)
+        else:
+            time.sleep(SLEEP_SEC)
 
     # One retry pass for anything that failed
     failed = list(set(failed))
     if failed:
-        print(f"  Retrying {len(failed)} failed tickers …")
+        print(f"  Retrying {len(failed)} failed tickers (waiting {YF_BACKOFF}s first) …")
+        time.sleep(YF_BACKOFF)
         still_failed = []
         for i in range(0, len(failed), ENRICH_BATCH):
             still_failed.extend(_enrich_batch(failed[i:i + ENRICH_BATCH], cache))
