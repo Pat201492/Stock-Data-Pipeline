@@ -87,9 +87,34 @@ def _realized_vol(closes):
     return round((var ** 0.5) * (252 ** 0.5) * 100, 1)
 
 
+_MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+
+
+def _monthly_and_seasonality(full):
+    """full: pandas Close Series (up to 5y). Returns (monthly_avg, seasonality).
+    monthly_avg = [[YYYY-MM, mean], …]; seasonality = [[MonthName, mean, index]]
+    where index = month mean / overall mean × 100 (100 = average)."""
+    monthly, seasonality = [], []
+    try:
+        m = full.resample("ME").mean().dropna()
+        monthly = [[f"{idx.year:04d}-{idx.month:02d}", round(float(v), 4)] for idx, v in m.items()]
+        overall = float(full.mean())
+        by_month = full.groupby(full.index.month).mean()
+        for mo in range(1, 13):
+            if mo in by_month.index:
+                avg = float(by_month.loc[mo])
+                seasonality.append([_MONTHS[mo - 1], round(avg, 4),
+                                    round(avg / overall * 100, 1) if overall else None])
+    except Exception:
+        pass
+    return monthly, seasonality
+
+
 def _metrics_from_history(hist):
-    """hist: pandas DataFrame with a Close column (1y daily). Returns metric dict."""
-    series = hist["Close"].dropna()
+    """hist: pandas DataFrame with a Close column (up to 5y daily). 1y metrics
+    come from the tail; monthly averages + seasonality use the full span."""
+    full = hist["Close"].dropna()
+    series = full.tail(252)                 # ~1y for the headline metrics
     closes = [float(c) for c in series.tolist()]
     if not closes:
         return None
@@ -107,6 +132,16 @@ def _metrics_from_history(hist):
         ytd_anchor = closes[0]
     hi = max(closes); lo = min(closes)
     rng = ((price - lo) / (hi - lo) * 100) if hi > lo else None
+    # Dated price history (~1y, downsampled to ≤130 points) for the detail chart.
+    history = []
+    try:
+        s2 = series.iloc[-252:]
+        step = max(1, len(s2) // 130)
+        for i in range(0, len(s2), step):
+            history.append([str(s2.index[i].date()), round(float(s2.iloc[i]), 4)])
+    except Exception:
+        history = []
+    monthly, seasonality = _monthly_and_seasonality(full)
     return {
         "price":      round(price, 4),
         "chg_1d":     _pct(price, back(1)),
@@ -119,6 +154,9 @@ def _metrics_from_history(hist):
         "range_pct":  round(rng, 1) if rng is not None else None,
         "vol_20d":    _realized_vol(closes),
         "spark":      [round(c, 4) for c in closes[-30:]],
+        "history":    history,
+        "monthly":    monthly,
+        "seasonality": seasonality,
     }
 
 
@@ -134,8 +172,9 @@ def _fred_overlay(series_id):
 def main():
     print("Commodities feed — fetching futures via yfinance …")
     symbols = list(COMMODITIES.keys())
-    # One batched download for all roots (1y daily closes).
-    data = yf.download(symbols, period="1y", interval="1d",
+    # 5y daily closes — 1y metrics come from the tail; monthly averages +
+    # seasonality need the multi-year span (crop cycles, seasonal logistics).
+    data = yf.download(symbols, period="5y", interval="1d",
                        group_by="ticker", progress=False, threads=True)
 
     snapshot = []

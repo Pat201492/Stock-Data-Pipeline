@@ -188,6 +188,13 @@ def commodity(root: str):
         raise HTTPException(503, "commodities.json not generated yet")
     for r in d.get("commodities", []):
         if r["root"].lower() == root.lower():
+            try:
+                from commodity_trade import for_root
+                trade = for_root(r["root"])
+                if trade:
+                    r = {**r, "trade": trade}   # top exporters / importers
+            except Exception:
+                pass
             return r
     raise HTTPException(404, f"{root} not found")
 
