@@ -88,6 +88,57 @@ def _rows(name, key="stocks"):
     return d.get(key, [])
 
 
+@app.get("/api/integrity")
+def integrity():
+    """Data-integrity snapshot: freshness, coverage, quality distribution,
+    model completeness, commodity fetch gaps."""
+    u = _load("universe.json") or {}
+    f = _load("fundamentals.json") or {}
+    m = _load("model.json") or {}
+    c = _load("commodities.json") or {}
+    opt = _load("options.json") or {}
+    exp = _load("exposure.json") or {}
+
+    # commodity fetch gaps vs the configured set
+    expected, missing = [], []
+    try:
+        from commodities import COMMODITIES
+        expected = list(COMMODITIES.keys())
+        have = {r["root"] for r in c.get("commodities", [])}
+        missing = [{"root": r, "name": COMMODITIES[r][0]} for r in expected if r not in have]
+    except Exception:
+        pass
+
+    return {
+        "generated": {
+            "universe": u.get("generated"),
+            "fundamentals": f.get("generated"),
+            "model": m.get("generated"),
+            "commodities": c.get("asof"),
+        },
+        "coverage": {
+            "universe": u.get("total"),
+            "fundamentals": f.get("total"),
+            "model": m.get("total"),
+            "options_tickers": len(opt),
+            "exposure_tickers": len(exp),
+        },
+        "quality_summary": f.get("quality_summary"),
+        "model_completeness": {
+            "total": m.get("total"),
+            "dcf": m.get("dcf_computed"),
+            "comps": m.get("comps_computed"),
+            "m3": m.get("m3_computed"),
+            "all3": m.get("all3_computed"),
+        },
+        "commodities": {
+            "fetched": c.get("count"),
+            "expected": len(expected),
+            "missing": missing,
+        },
+    }
+
+
 @app.get("/health")
 def health():
     have = {f: os.path.exists(os.path.join(DATA_DIR, f))
