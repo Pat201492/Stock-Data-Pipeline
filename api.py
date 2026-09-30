@@ -213,6 +213,10 @@ def list_stocks(
             "roic": f.get("roic"),
             "roc_greenblatt": f.get("roc_greenblatt"),
             "ebit_ev_yield": f.get("ebit_ev_yield"),
+            "magic_source": f.get("magic_source"),
+            "magic_period_end": f.get("magic_period_end"),
+            "magic_accession": f.get("magic_accession"),
+            "magic_derived": f.get("magic_derived"),
             "score": m.get("score_composite") or m.get("score"),
             "upside": m.get("avg_upside") or m.get("upside"),
         })

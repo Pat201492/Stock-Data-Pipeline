@@ -85,6 +85,11 @@ class Fundamentals(Base):
     roic             = Column(Float)
     roc_greenblatt   = Column(Float)   # EBIT / (NWC + net PP&E), percent
     ebit_ev_yield    = Column(Float)   # EBIT / EV, percent
+    # Magic Formula provenance (issue #17): which source supplied each leg above.
+    magic_source     = Column(String)  # "xbrl" | "yfinance" | "mixed"
+    magic_period_end = Column(String)  # fiscal-year end of the 10-K used (as-filed)
+    magic_accession  = Column(String)  # SEC accession of that 10-K
+    magic_derived    = Column(String)  # #259 derivation rules that fired, comma-joined
     roe              = Column(Float)
     roa              = Column(Float)
     # Margins
@@ -225,6 +230,10 @@ def _migrate():
             if col not in cols:
                 with engine.begin() as conn:
                     conn.execute(text(f"ALTER TABLE fundamentals ADD COLUMN {col} FLOAT"))
+        for col in ("magic_source", "magic_period_end", "magic_accession", "magic_derived"):
+            if col not in cols:
+                with engine.begin() as conn:
+                    conn.execute(text(f"ALTER TABLE fundamentals ADD COLUMN {col} VARCHAR"))
 
 
 def init_db():
