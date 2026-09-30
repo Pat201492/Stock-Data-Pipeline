@@ -80,30 +80,31 @@ def main():
     log(f"  Scripts: {', '.join(scripts)}")
     log(DIV)
 
-    t0      = time.time()
-    results = {}
+    with config.yfinance_lock():
+        t0      = time.time()
+        results = {}
 
-    for script in scripts:
+        for script in scripts:
+            log(DIV)
+            ok              = run_script(script)
+            results[script] = ok
+            if not ok: log(f"⚠️  {script} failed — continuing")
+            log("")
+
         log(DIV)
-        ok              = run_script(script)
-        results[script] = ok
-        if not ok: log(f"⚠️  {script} failed — continuing")
-        log("")
+        log(f"  Complete — {round(time.time() - t0, 1)}s total")
+        log(DIV)
+        for script, ok in results.items():
+            log(f"  {script:<22}  {'✅ OK' if ok else '❌ FAILED'}")
+        log(DIV)
 
-    log(DIV)
-    log(f"  Complete — {round(time.time() - t0, 1)}s total")
-    log(DIV)
-    for script, ok in results.items():
-        log(f"  {script:<22}  {'✅ OK' if ok else '❌ FAILED'}")
-    log(DIV)
-
-    failed = [s for s, ok in results.items() if not ok]
-    if failed:
-        log(f"\n⚠️  {len(failed)} script(s) failed. Check run.log.")
-        sys.exit(1)
-    else:
-        log("\n🎉 All scripts completed successfully.")
-        sys.exit(0)
+        failed = [s for s, ok in results.items() if not ok]
+        if failed:
+            log(f"\n⚠️  {len(failed)} script(s) failed. Check run.log.")
+            sys.exit(1)
+        else:
+            log("\n🎉 All scripts completed successfully.")
+            sys.exit(0)
 
 
 if __name__ == "__main__":
