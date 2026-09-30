@@ -2,7 +2,6 @@
 politicians_database.py — SQLAlchemy models for congressional + insider trade data
 Separate DB (politicians.db) from stocks.db to keep concerns isolated.
 """
-import os
 from datetime import datetime
 from sqlalchemy import (
     create_engine, Column, String, Float, Integer,
@@ -10,9 +9,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-_DB_PATH = os.environ.get("POL_DB_PATH", os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "politicians.db"
-))
+import config
+_DB_PATH = config.POL_DB_PATH  # canonical resolution (under DATA_DIR unless POL_DB_PATH set)
 DATABASE_URL = f"sqlite:///{_DB_PATH}"
 
 engine = create_engine(
