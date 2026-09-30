@@ -289,7 +289,33 @@ FIELD_MAPS = {
     "current_liabilities": ("Current Liabilities", "Total Current Liabilities",
                             "currentLiabilities"),
     "invested_capital": ("Invested Capital", "Total Capital"),
+    "ppe_net":          ("Net PPE", "Net Property Plant And Equipment",
+                         "Property Plant Equipment Net"),
 }
+
+
+# ── Magic Formula (Greenblatt) ────────────────────────────────────────────────
+# Both return a percent, or None when any input is missing or the denominator is
+# zero -- never a 0 substituted for an unreported number. Definitions match
+# Trader-Screener's tools/edgar_scrubber/magic_inputs.py so its XBRL compare is
+# like-for-like (Trader-Screener #248). Distinct from `roic` (NOPAT / invested
+# capital), which is unchanged.
+
+def roc_greenblatt(ebit, current_assets, current_liabilities, ppe_net):
+    """Greenblatt ROC = EBIT / ((current assets - current liabilities) + net PP&E)."""
+    vals = [sf(v) for v in (ebit, current_assets, current_liabilities, ppe_net)]
+    if any(v is None for v in vals):
+        return None
+    e, ca, cl, ppe = vals
+    return pct(e, (ca - cl) + ppe)
+
+def ebit_ev_yield(ebit, mkt_cap, total_debt, cash):
+    """Earnings yield = EBIT / EV, with EV = market cap + total debt - cash."""
+    vals = [sf(v) for v in (ebit, mkt_cap, total_debt, cash)]
+    if any(v is None for v in vals):
+        return None
+    e, mc, debt, c = vals
+    return pct(e, mc + debt - c)
 
 def extract_field(df, field_name):
     """Look up a field in a DataFrame using FIELD_MAPS fallback names."""

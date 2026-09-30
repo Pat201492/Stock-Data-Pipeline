@@ -83,6 +83,8 @@ class Fundamentals(Base):
     curr_ratio       = Column(Float)
     # Returns
     roic             = Column(Float)
+    roc_greenblatt   = Column(Float)   # EBIT / (NWC + net PP&E), percent
+    ebit_ev_yield    = Column(Float)   # EBIT / EV, percent
     roe              = Column(Float)
     roa              = Column(Float)
     # Margins
@@ -217,6 +219,12 @@ def _migrate():
         if "summary" not in cols:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE news ADD COLUMN summary TEXT"))
+    if "fundamentals" in insp.get_table_names():
+        cols = {c["name"] for c in insp.get_columns("fundamentals")}
+        for col in ("roc_greenblatt", "ebit_ev_yield"):
+            if col not in cols:
+                with engine.begin() as conn:
+                    conn.execute(text(f"ALTER TABLE fundamentals ADD COLUMN {col} FLOAT"))
 
 
 def init_db():

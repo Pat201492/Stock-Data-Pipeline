@@ -177,6 +177,8 @@ def list_stocks(
             "rank": u.get("rank"),
             "pe": f.get("pe"),
             "roic": f.get("roic"),
+            "roc_greenblatt": f.get("roc_greenblatt"),
+            "ebit_ev_yield": f.get("ebit_ev_yield"),
             "score": m.get("score_composite") or m.get("score"),
             "upside": m.get("avg_upside") or m.get("upside"),
         })
