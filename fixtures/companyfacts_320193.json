@@ -1,0 +1,96 @@
+{
+  "cik": 320193,
+  "entityName": "Apple Inc.",
+  "facts": {
+    "dei": {
+      "EntityCommonStockSharesOutstanding": {
+        "label": "Entity Common Stock, Shares Outstanding",
+        "description": "Indicate number of shares or other units outstanding of each of registrant's classes of capital or common stock.",
+        "units": {
+          "shares": [
+            {"end": "2023-10-20", "val": 15552752000, "accn": "0000320193-23-000106", "fy": 2023, "fp": "FY", "form": "10-K", "filed": "2023-11-03"}
+          ]
+        }
+      }
+    },
+    "us-gaap": {
+      "RevenueFromContractWithCustomerExcludingAssessedTax": {
+        "label": "Revenue from Contract with Customer, Excluding Assessed Tax",
+        "description": "Amount, excluding tax collected from customer, of revenue from satisfaction of performance obligation by transferring promised good or service to customer.",
+        "units": {
+          "USD": [
+            {"start": "2021-09-26", "end": "2022-09-24", "val": 394328000000, "accn": "0000320193-22-000108", "fy": 2022, "fp": "FY", "form": "10-K", "filed": "2022-10-28", "frame": "CY2022"},
+            {"start": "2022-09-25", "end": "2023-09-30", "val": 383285000000, "accn": "0000320193-23-000106", "fy": 2023, "fp": "FY", "form": "10-K", "filed": "2023-11-03", "frame": "CY2023"},
+            {"start": "2023-10-01", "end": "2023-12-30", "val": 119575000000, "accn": "0000320193-24-000006", "fy": 2024, "fp": "Q1", "form": "10-Q", "filed": "2024-02-02"}
+          ]
+        }
+      },
+      "GrossProfit": {
+        "label": "Gross Profit",
+        "description": "Aggregate revenue less cost of goods and services sold or operating expenses directly attributable to the revenue generation activity.",
+        "units": {
+          "USD": [
+            {"start": "2022-09-25", "end": "2023-09-30", "val": 169148000000, "accn": "0000320193-23-000106", "fy": 2023, "fp": "FY", "form": "10-K", "filed": "2023-11-03"}
+          ]
+        }
+      },
+      "NetIncomeLoss": {
+        "label": "Net Income (Loss) Attributable to Parent",
+        "description": "The portion of profit or loss for the period, net of income taxes, which is attributable to the parent.",
+        "units": {
+          "USD": [
+            {"start": "2021-09-26", "end": "2022-09-24", "val": 99803000000, "accn": "0000320193-22-000108", "fy": 2022, "fp": "FY", "form": "10-K", "filed": "2022-10-28"},
+            {"start": "2022-09-25", "end": "2023-09-30", "val": 96995000000, "accn": "0000320193-23-000106", "fy": 2023, "fp": "FY", "form": "10-K", "filed": "2023-11-03"},
+            {"start": "2023-10-01", "end": "2023-12-30", "val": 33916000000, "accn": "0000320193-24-000006", "fy": 2024, "fp": "Q1", "form": "10-Q", "filed": "2024-02-02"}
+          ]
+        }
+      },
+      "OperatingIncomeLoss": {
+        "label": "Operating Income (Loss)",
+        "description": "The net result for the period of deducting operating expenses from operating revenues.",
+        "units": {
+          "USD": [
+            {"start": "2021-09-26", "end": "2022-09-24", "val": 119437000000, "accn": "0000320193-22-000108", "fy": 2022, "fp": "FY", "form": "10-K", "filed": "2022-10-28"},
+            {"start": "2022-09-25", "end": "2023-09-30", "val": 114301000000, "accn": "0000320193-23-000106", "fy": 2023, "fp": "FY", "form": "10-K", "filed": "2023-11-03"}
+          ]
+        }
+      },
+      "Assets": {
+        "label": "Assets",
+        "description": "Sum of the carrying amounts as of the balance sheet date of all assets that are recognized.",
+        "units": {
+          "USD": [
+            {"end": "2023-09-30", "val": 352583000000, "accn": "0000320193-23-000106", "fy": 2023, "fp": "FY", "form": "10-K", "filed": "2023-11-03"}
+          ]
+        }
+      },
+      "StockholdersEquity": {
+        "label": "Stockholders' Equity Attributable to Parent",
+        "description": "Total of all stockholders' equity items, net of receivables from officers, directors, owners, and affiliates of the entity.",
+        "units": {
+          "USD": [
+            {"end": "2023-09-30", "val": 62146000000, "accn": "0000320193-23-000106", "fy": 2023, "fp": "FY", "form": "10-K", "filed": "2023-11-03"}
+          ]
+        }
+      },
+      "NetCashProvidedByUsedInOperatingActivities": {
+        "label": "Net Cash Provided by (Used in) Operating Activities",
+        "description": "Amount of cash inflow (outflow) of operating activities, including discontinued operations.",
+        "units": {
+          "USD": [
+            {"start": "2022-09-25", "end": "2023-09-30", "val": 110543000000, "accn": "0000320193-23-000106", "fy": 2023, "fp": "FY", "form": "10-K", "filed": "2023-11-03"}
+          ]
+        }
+      },
+      "StandardProductWarrantyAccrual": {
+        "label": "Standard Product Warranty Accrual",
+        "description": "Carrying value as of the balance sheet date of the standard product warranty liability.",
+        "units": {
+          "USD": [
+            {"end": "2023-09-30", "val": 13100000000, "accn": "0000320193-23-000106", "fy": 2023, "fp": "FY", "form": "10-K", "filed": "2023-11-03"}
+          ]
+        }
+      }
+    }
+  }
+}
