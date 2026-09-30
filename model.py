@@ -1049,19 +1049,20 @@ def _save_momentum_to_db(stocks):
     """
     try:
         from database import SessionLocal, Fundamentals, init_db, upsert
+        from serializers import db_record
         from datetime import datetime as _dt
         init_db()
         db = SessionLocal()
         n = 0
         for s in stocks:
-            row = {"ticker": s["ticker"]}
-            for f in ("rsi", "ma_ratio", "ret_1y"):
-                if s.get(f) is not None:
-                    row[f] = s[f]
-            if len(row) > 1:  # only write if at least one momentum field present
-                row["last_updated"] = _dt.utcnow()
-                upsert(db, Fundamentals, row)
-                n += 1
+            present = {f: s[f] for f in ("rsi", "ma_ratio", "ret_1y")
+                       if s.get(f) is not None}
+            if not present:  # only write if at least one momentum field present
+                continue
+            row = db_record(Fundamentals, {"ticker": s["ticker"], **present})
+            row["last_updated"] = _dt.utcnow()
+            upsert(db, Fundamentals, row)
+            n += 1
         db.commit()
         db.close()
         print(f"  ✅ Saved momentum (rsi/ma_ratio/ret_1y) for {n} stocks to fundamentals")
@@ -1092,14 +1093,19 @@ def _save_to_db(results):
     }
     try:
         from database import SessionLocal, Valuation, init_db, upsert
+        from serializers import db_record
         from datetime import datetime as _dt
         init_db()
         db = SessionLocal()
         for s in results:
-            row = {"ticker": s["ticker"], "last_updated": _dt.utcnow()}
-            for src, dst in _FIELD_MAP.items():
-                if src in s and s[src] is not None:
-                    row[dst] = s[src]
+            # `s` is the SAME rich record written to model.json; _FIELD_MAP renames
+            # the model's result keys to the Valuation column names and db_record
+            # projects onto the actual columns (single DB-row construction, #12).
+            mapped = {dst: s[src] for src, dst in _FIELD_MAP.items()
+                      if src in s and s[src] is not None}
+            mapped["ticker"] = s["ticker"]
+            row = db_record(Valuation, mapped)
+            row["last_updated"] = _dt.utcnow()
             upsert(db, Valuation, row)
         db.commit()
         db.close()

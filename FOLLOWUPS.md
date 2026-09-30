@@ -15,7 +15,7 @@ Tracked items from the PR #1 review (commodities/options/API). Status updated as
 - [ ] **API auth / rate-limit** — read-only and serves all data; intended as a private data service. Add auth/limits if ever exposed publicly. (Cutover hosting decision.)
 - [ ] **Bad `sort` field on `/api/stocks`** silently no-ops (all-None sort). Could return `400` instead. Low.
 - [ ] **Term structure (contango/backwardation)** — yfinance gives only continuous front-month; needs explicit contract months. Tracked in Trader-Screener `Commodities.md`.
-- [ ] **DB persistence** for commodities/options — currently JSON-only (mirrors universe/model). Add SQLAlchemy models if the API moves to DB-backed reads.
+- [ ] **DB persistence** for commodities/options — currently JSON-only. Add SQLAlchemy models if the API moves to DB-backed reads. Follow the issue #12 pattern: build each record once and derive both the DB row (via `serializers.db_record`) and the JSON export from it. Same applies to `etf_universe.py`'s `etf_cache.json` sector weightings (currently un-persisted; add an `ETF.sector_weightings` column or table). See README "Persistence — source of truth".
 - [ ] **IV rank / IV percentile** — needs accumulated history (the snapshot append exists for commodities; add for options).
 
 ## Cutover Phase 1 (deploy — in progress)
