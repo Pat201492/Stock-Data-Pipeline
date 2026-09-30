@@ -40,11 +40,11 @@ warnings.filterwarnings("ignore")
 import numpy as np
 import yfinance as yf
 from data_utils import sf, fmt, ratio, load_cache, save_cache, run_batches, score_stock
+import config
 
-DATA_DIR          = os.environ.get("DATA_DIR") or os.path.dirname(os.path.abspath(__file__))
-FUNDAMENTALS_FILE = os.path.join(DATA_DIR, "fundamentals.json")
-CACHE_FILE        = os.path.join(DATA_DIR, "model_cache.json")
-OUTPUT_FILE       = os.path.join(DATA_DIR, "model.json")
+FUNDAMENTALS_FILE = config.FUNDAMENTALS_JSON
+CACHE_FILE        = config.MODEL_CACHE_JSON
+OUTPUT_FILE       = config.MODEL_JSON
 
 BATCH_SIZE  = 50
 SLEEP_SEC   = 2

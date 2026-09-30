@@ -25,14 +25,14 @@ warnings.filterwarnings("ignore")
 
 import yfinance as yf
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR   = os.environ.get("DATA_DIR", SCRIPT_DIR)  # /data volume on Fly
-OUT        = os.path.join(DATA_DIR, "options.json")
-UNIVERSE   = os.path.join(DATA_DIR, "universe.json")
-FUND       = os.path.join(DATA_DIR, "fundamentals.json")
+import config
 
-TOP_N    = int(os.environ.get("OPTIONS_TOP_N", "25"))
-MAX_EXP  = int(os.environ.get("OPTIONS_MAX_EXP", "6"))
+OUT        = config.OPTIONS_JSON            # /data volume on Fly
+UNIVERSE   = config.UNIVERSE_JSON
+FUND       = config.FUNDAMENTALS_JSON
+
+TOP_N    = config.OPTIONS_TOP_N
+MAX_EXP  = config.OPTIONS_MAX_EXP
 DEFAULT_RF = 0.04  # fallback risk-free if FRED unavailable
 
 

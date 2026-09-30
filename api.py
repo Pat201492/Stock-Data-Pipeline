@@ -18,11 +18,13 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
+import config
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # Where the pipeline writes its outputs. On Fly this is the /data volume, shared
 # in-process by the API and the nightly scheduler (single machine — Fly volumes
-# attach to one machine only, so API + cron live together).
-DATA_DIR = os.environ.get("DATA_DIR", SCRIPT_DIR)
+# attach to one machine only, so API + cron live together). Resolved once in config.py.
+DATA_DIR = config.DATA_DIR
 TTL = 300  # re-read JSON at most every 5 min
 
 app = FastAPI(title="Stock Data Pipeline API", version="1.0")

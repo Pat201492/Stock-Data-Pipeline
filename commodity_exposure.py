@@ -27,10 +27,10 @@ import json, os, warnings
 from datetime import datetime
 warnings.filterwarnings("ignore")
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR   = os.environ.get("DATA_DIR") or SCRIPT_DIR
-OUT        = os.path.join(DATA_DIR, "exposure.json")
-UNIVERSE   = os.path.join(DATA_DIR, "universe.json")
+import config
+
+OUT        = config.EXPOSURE_JSON
+UNIVERSE   = config.UNIVERSE_JSON
 
 # Curated economic links. sign = effect on the STOCK of a commodity price RISE.
 # role: input (cost), output (revenue), margin (spread-driven).
@@ -171,7 +171,7 @@ def _compute(tickers):
 
 
 def main():
-    compute = os.environ.get("EXPOSURE_COMPUTE") == "1"
+    compute = config.EXPOSURE_COMPUTE
     asof = datetime.utcnow().strftime("%Y-%m-%d")
 
     # curated always; computed optionally

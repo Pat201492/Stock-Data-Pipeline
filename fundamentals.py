@@ -27,10 +27,11 @@ from data_utils import (
     load_cache, save_cache, run_batches,
 )
 
-DATA_DIR      = os.environ.get("DATA_DIR") or os.path.dirname(os.path.abspath(__file__))
-UNIVERSE_FILE = os.path.join(DATA_DIR, "universe.json")
-CACHE_FILE    = os.path.join(DATA_DIR, "fundamentals_cache.json")
-OUTPUT_FILE   = os.path.join(DATA_DIR, "fundamentals.json")
+import config
+
+UNIVERSE_FILE = config.UNIVERSE_JSON
+CACHE_FILE    = config.FUNDAMENTALS_CACHE_JSON
+OUTPUT_FILE   = config.FUNDAMENTALS_JSON
 BATCH_SIZE    = 20
 SLEEP_SEC     = 3
 MAX_RETRIES   = 2
