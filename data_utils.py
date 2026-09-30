@@ -129,7 +129,9 @@ def run_batches(items, fetch_fn, cache, cache_path,
     sleep_sec   = float(os.environ.get("YF_SLEEP",   config.YF_SLEEP   if sleep_sec   is None else sleep_sec))
     batch_size  = int(os.environ.get("YF_BATCH",     config.YF_BATCH   if batch_size  is None else batch_size))
     max_retries = int(os.environ.get("YF_RETRIES",   config.YF_RETRIES if max_retries is None else max_retries))
-    backoff     = config.YF_BACKOFF  # hard sleep on a rate-limit signal
+    # The hard rate-limit sleep is the shared yf_client primitive — imported lazily
+    # so importing data_utils (api.py, tests, …) never pulls in yfinance.
+    import yf_client
 
     need  = [t for t in items if t not in cache]
     if not need:
@@ -155,8 +157,7 @@ def run_batches(items, fetch_fn, cache, cache_path,
         # A whole batch failing is the rate-limit signal — back off hard so the
         # rest of the run isn't lost (this is what wiped commodities/options).
         if errs and len(errs) == len(batch):
-            print(f"    ⚠️  batch {page} fully failed — backing off {backoff}s (rate limit?)")
-            time.sleep(backoff)
+            yf_client.backoff(f"batch {page} fully failed")
         else:
             time.sleep(sleep_sec)
 
@@ -165,8 +166,8 @@ def run_batches(items, fetch_fn, cache, cache_path,
         if not failed:
             break
         failed = list(set(failed))
-        print(f"  Retry pass {attempt+1}: {len(failed)} tickers (waiting {backoff}s first)")
-        time.sleep(backoff)
+        print(f"  Retry pass {attempt+1}: {len(failed)} tickers")
+        yf_client.backoff("retry pass")
         next_failed = []
         for i in range(0, len(failed), batch_size):
             results, errs = fetch_fn(failed[i:i + batch_size])

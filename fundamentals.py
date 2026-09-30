@@ -2,7 +2,7 @@
 fundamentals.py — Fetch and compute all fundamental data
 =========================================================
 Reads universe.json for ticker order.
-Batch-fetches via yf.Tickers (one API call per batch of 20).
+Batch-fetches via the yf_client wrapper (one API call per batch of 20).
 Uses data_utils.py for robust field extraction with multiple
 fallback names — handles yfinance inconsistencies across versions.
 Assigns a data_quality score (0-100) to every stock.
@@ -19,7 +19,7 @@ import json, os, time, warnings
 from datetime import datetime
 warnings.filterwarnings("ignore")
 
-import yfinance as yf
+from yf_client import yf_tickers
 from data_utils import (
     sf, fmt, pct, ratio, cagr,
     get_row, first_valid, second_valid, series_values, series_cagr,
@@ -546,7 +546,7 @@ def fetch_batch(tickers):
     """Fetch one batch of tickers. Returns (results_dict, failed_list)."""
     results, failed = {}, []
     try:
-        group = yf.Tickers(" ".join(tickers))
+        group = yf_tickers(tickers)
         for ticker in tickers:
             try:
                 rec = extract_fundamentals(ticker, group.tickers[ticker])

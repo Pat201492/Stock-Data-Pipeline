@@ -19,7 +19,7 @@ import json, os, math, warnings
 from datetime import datetime
 warnings.filterwarnings("ignore")
 
-import yfinance as yf
+import yf_client
 
 try:
     import fred
@@ -174,8 +174,15 @@ def main():
     symbols = list(COMMODITIES.keys())
     # 5y daily closes — 1y metrics come from the tail; monthly averages +
     # seasonality need the multi-year span (crop cycles, seasonal logistics).
-    data = yf.download(symbols, period="5y", interval="1d",
-                       group_by="ticker", progress=False, threads=True)
+    # Shared wrapper: paces the call and backs off on a rate-limit signal before
+    # giving up. A persistent 429 raises through, and the empty-snapshot guard
+    # below then keeps the existing commodities.json rather than clobbering it.
+    try:
+        data = yf_client.yf_download(symbols, period="5y", interval="1d",
+                                     group_by="ticker", progress=False, threads=True)
+    except Exception as e:
+        print(f"  ⚠️  yfinance download failed: {e}")
+        data = None
 
     snapshot = []
     asof = datetime.utcnow().strftime("%Y-%m-%d")

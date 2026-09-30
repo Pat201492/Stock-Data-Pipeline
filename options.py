@@ -23,7 +23,8 @@ import json, os, math, warnings
 from datetime import datetime, timezone
 warnings.filterwarnings("ignore")
 
-import yfinance as yf
+from yf_client import yf_ticker
+from data_utils import run_batches
 
 import config
 
@@ -125,7 +126,7 @@ def _years_to_exp(exp_str):
 
 
 def _process_ticker(sym, r, q):
-    tk = yf.Ticker(sym)
+    tk = yf_ticker(sym)
     spot = None
     try:
         fi = tk.fast_info            # FastInfo object, not a plain dict
@@ -210,16 +211,30 @@ def main():
     print(f"Options feed — {len(watch)} tickers, ≤{MAX_EXP} expirations each, r={r:.3%}")
 
     out, asof = {}, datetime.utcnow().strftime("%Y-%m-%d")
-    for i, sym in enumerate(watch, 1):
-        try:
-            res = _process_ticker(sym, r, dy.get(sym, 0.0))
-        except Exception as e:
-            print(f"  ⚠️  {sym}: {e}"); res = None
-        if res:
-            res["asof"] = asof
-            out[sym] = res
-            s = res["summary"]
-            print(f"  [{i:>2}/{len(watch)}] {sym:<6} spot {s['spot']:>8}  ATM IV {s['atm_iv']}  P/C {s['put_call_oi']}")
+
+    def fetch_batch(batch):
+        """run_batches fetch_fn: process a batch of tickers, returning the usual
+        (results, failed). A whole batch failing is the rate-limit signal that
+        trips the shared backoff in run_batches — the same path fundamentals and
+        model use."""
+        results, failed = {}, []
+        for sym in batch:
+            try:
+                res = _process_ticker(sym, r, dy.get(sym, 0.0))
+            except Exception as e:
+                print(f"  ⚠️  {sym}: {e}"); res = None
+            if res:
+                res["asof"] = asof
+                results[sym] = res
+                s = res["summary"]
+                print(f"  {sym:<6} spot {s['spot']:>8}  ATM IV {s['atm_iv']}  P/C {s['put_call_oi']}")
+            else:
+                failed.append(sym)
+        return results, failed
+
+    # run_batches owns pacing, the whole-batch backoff, and incremental saves to
+    # OUT (the output is already {ticker: record}, so the cache IS the output).
+    run_batches(watch, fetch_batch, out, OUT)
 
     with open(OUT, "w") as f:
         json.dump(out, f, indent=2)
