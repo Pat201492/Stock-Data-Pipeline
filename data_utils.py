@@ -14,6 +14,7 @@ Provides:
 """
 
 import json, math, time, os
+import config
 
 
 # ── Numeric safety ────────────────────────────────────────────────────────────
@@ -102,7 +103,7 @@ def save_cache(cache, path):
 # ── Batch runner with retry ───────────────────────────────────────────────────
 
 def run_batches(items, fetch_fn, cache, cache_path,
-                batch_size=50, sleep_sec=2, max_retries=2,
+                batch_size=None, sleep_sec=None, max_retries=None,
                 progress_every=10):
     """
     Generic batch processor used by all three fetch scripts.
@@ -122,11 +123,13 @@ def run_batches(items, fetch_fn, cache, cache_path,
     -------
     cache (mutated in-place, also returned for convenience)
     """
-    # Env-tunable pacing — slow down to avoid yfinance rate limits on big runs.
-    sleep_sec   = float(os.environ.get("YF_SLEEP", sleep_sec))
-    batch_size  = int(os.environ.get("YF_BATCH", batch_size))
-    max_retries = int(os.environ.get("YF_RETRIES", max_retries))
-    backoff     = float(os.environ.get("YF_BACKOFF", 45))  # hard sleep on a rate-limit signal
+    # Env-tunable pacing — single source of defaults is config.py (which reads the
+    # YF_* env vars once). Env still wins over a caller-supplied arg; when a caller
+    # passes nothing the canonical config default applies. No defaults duplicated here.
+    sleep_sec   = float(os.environ.get("YF_SLEEP",   config.YF_SLEEP   if sleep_sec   is None else sleep_sec))
+    batch_size  = int(os.environ.get("YF_BATCH",     config.YF_BATCH   if batch_size  is None else batch_size))
+    max_retries = int(os.environ.get("YF_RETRIES",   config.YF_RETRIES if max_retries is None else max_retries))
+    backoff     = config.YF_BACKOFF  # hard sleep on a rate-limit signal
 
     need  = [t for t in items if t not in cache]
     if not need:
