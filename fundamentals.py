@@ -23,7 +23,7 @@ import yfinance as yf
 from data_utils import (
     sf, fmt, pct, ratio, cagr,
     get_row, first_valid, second_valid, series_values, series_cagr,
-    extract_field, data_quality_score,
+    extract_field, data_quality_score, roc_greenblatt, ebit_ev_yield,
     load_cache, save_cache, run_batches,
 )
 
@@ -210,6 +210,7 @@ def extract_fundamentals(ticker, yft):
     ca_s     = annual_or_quarterly("current_assets",      bs, bs_q)
     cl_s     = annual_or_quarterly("current_liabilities", bs, bs_q)
     ic_s     = annual_or_quarterly("invested_capital",    bs, bs_q)
+    ppe_s    = annual_or_quarterly("ppe_net",             bs, bs_q)
 
     # ── Raw scalar values ─────────────────────────────────────────────────────
     rev      = first_valid(rev_s)    or 0
@@ -419,6 +420,13 @@ def extract_fundamentals(ticker, yft):
     mkt_cap = sf(info.get("marketCap") or 0)
     ev      = sf(info.get("enterpriseValue") or 0)
 
+    # Magic Formula legs (Trader-Screener #248). Raw first_valid values, NOT the
+    # `or 0` scalars above: a missing line must yield None, never a fake 0.
+    roc_gb    = roc_greenblatt(first_valid(op_s), first_valid(ca_s),
+                               first_valid(cl_s), first_valid(ppe_s))
+    ebit_ev_y = ebit_ev_yield(first_valid(op_s), mkt_cap or None,
+                              first_valid(debt_s), first_valid(cash_s))
+
     record = {
         # Identity
         "ticker":   ticker,
@@ -497,6 +505,8 @@ def extract_fundamentals(ticker, yft):
         "roe":          roe,
         "roa":          roa,
         "roic":         roic,
+        "roc_greenblatt": roc_gb,
+        "ebit_ev_yield":  ebit_ev_y,
         "d_to_e":       d_to_e,
         "d_to_ebitda":  d_to_ebitda,
         "curr_ratio":   curr_ratio,
@@ -686,7 +696,7 @@ def _save_to_db(stocks):
         "total_debt","cash","equity","shares","bvps","net_debt","mkt_cap_raw",
         "pe","fwd_pe","ev_ebitda","ps","pb","peg",
         "d_to_e","d_to_ebitda","int_cov","curr_ratio",
-        "roic","roe","roa","gross_margin","op_margin","net_margin","fcf_margin",
+        "roic","roc_greenblatt","ebit_ev_yield","roe","roa","gross_margin","op_margin","net_margin","fcf_margin",
         "rev_cagr_1y","rev_cagr_3y","rev_cagr_5y","rev_cagr_10y",
         "eps_cagr_1y","eps_cagr_3y","eps_cagr_5y","eps_cagr_10y",
         "fcf_cagr_1y","fcf_cagr_3y","fcf_cagr_5y","fcf_cagr_10y",
