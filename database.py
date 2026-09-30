@@ -5,8 +5,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-import os as _os
-_DB_PATH    = _os.environ.get("DB_PATH", "stocks.db")
+import config
+_DB_PATH    = config.DB_PATH  # canonical resolution (under DATA_DIR unless DB_PATH set)
 DATABASE_URL = f"sqlite:///{_DB_PATH}"
 engine = create_engine(
     DATABASE_URL,

@@ -54,11 +54,25 @@ uvicorn api:app --port 8000     # serve the API (scheduler OFF unless RUN_SCHEDU
 > switch the API to object storage. In that case leave `RUN_SCHEDULER` unset on
 > Fly. Pick ONE place to run the pipeline; don't double-collect.
 
-## Data paths
-All collectors honor `DATA_DIR` (default = code folder; `/data` on Fly):
-`universe.py`, `fundamentals.py`, `model.py`, `etf_universe.py`, `commodities.py`,
-`options.py` read/write/cache there; `news.py` is DB-only (`DB_PATH` on `/data`).
-So a full `run.py` writes everything to the volume the API serves.
+## Configuration & data paths
+**`config.py` is the single source of the env-var contract.** All environment
+tunables and path resolution live there — read it rather than trusting a list
+here that can rot. `DATA_DIR` is resolved once (default = code folder; `/data`
+on Fly), and every JSON output, cache, DB, and `run.log` derives from it, so a
+full `run.py` writes everything to the volume the API serves — nothing escapes
+to the container FS.
+
+Env vars honored (all defined in `config.py`):
+- `DATA_DIR` — writable root for outputs/caches/DBs/`run.log`.
+- `DB_PATH`, `POL_DB_PATH` — SQLite paths (default under `DATA_DIR`).
+- `FRED_API_KEY` — macro series (`fred.py`).
+- `YF_SLEEP`, `YF_BATCH`, `YF_RETRIES`, `YF_BACKOFF` — yfinance pacing (one set
+  of canonical defaults, applied to universe enrich and `run_batches` alike).
+- `OPTIONS_TOP_N`, `OPTIONS_MAX_EXP` — options scope (`options.py`).
+- `EXPOSURE_COMPUTE` — enable computed exposure betas (`commodity_exposure.py`).
+- `RUN_SCHEDULER` — in-process nightly cron (`api.py`).
+
+`news.py` is DB-only (`DB_PATH`).
 
 ## ⚠️ Remaining before go-live
 - [ ] Set real secrets (`FRED_API_KEY`, Google SA) in `fly secrets`.

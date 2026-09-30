@@ -29,15 +29,16 @@ from urllib.error import URLError
 warnings.filterwarnings("ignore")
 
 import yfinance as yf
+import config
 
-DATA_DIR     = os.environ.get("DATA_DIR") or os.path.dirname(os.path.abspath(__file__))
-OUTPUT_FILE  = os.path.join(DATA_DIR, "universe.json")
-CACHE_FILE   = os.path.join(DATA_DIR, "universe_cache.json")
+OUTPUT_FILE  = config.UNIVERSE_JSON
+CACHE_FILE   = config.UNIVERSE_CACHE_JSON
 TARGET       = 2500
-# Env-tunable pacing — slow down to dodge yfinance rate limits on big runs.
-ENRICH_BATCH = int(os.environ.get("YF_BATCH", 50))
-SLEEP_SEC    = float(os.environ.get("YF_SLEEP", 2))
-YF_BACKOFF   = float(os.environ.get("YF_BACKOFF", 45))  # hard sleep on rate-limit signal
+# Env-tunable pacing (single source: config.py) — slow down to dodge yfinance
+# rate limits on big runs.
+ENRICH_BATCH = config.YF_BATCH
+SLEEP_SEC    = config.YF_SLEEP
+YF_BACKOFF   = config.YF_BACKOFF  # hard sleep on rate-limit signal
 MAX_RETRIES  = 3
 STALE_DAYS   = 7   # re-enrich if DB record older than this
 

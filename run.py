@@ -12,13 +12,15 @@ Usage:
   python run.py --from news           # news + prices only
 
 Pipeline: universe → fundamentals → model → news
-Log: run.log (appended each run)
+Log: run.log under DATA_DIR (config.RUN_LOG, appended each run)
 """
 
 import argparse, subprocess, sys, os, time
 from datetime import datetime
 
-LOG_FILE = "run.log"
+import config
+
+LOG_FILE = config.RUN_LOG  # under DATA_DIR so the log survives on the Fly volume
 SCRIPTS  = ["universe.py", "fundamentals.py", "model.py", "news.py",
             "etf_universe.py", "commodities.py", "options.py",
             "commodity_exposure.py"]
