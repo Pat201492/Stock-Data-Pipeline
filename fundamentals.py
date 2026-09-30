@@ -689,34 +689,21 @@ def main():
 
 
 def _save_to_db(stocks):
-    _FUND_FIELDS = [
-        "name","sector","industry","cap_size","rank","price",
-        "rev_now","gross_profit","operating_income","net_income","ebitda",
-        "eps_ttm","eps_fwd","operating_cf","capex","fcf","fcf_3yr_avg_raw",
-        "total_debt","cash","equity","shares","bvps","net_debt","mkt_cap_raw",
-        "pe","fwd_pe","ev_ebitda","ps","pb","peg",
-        "d_to_e","d_to_ebitda","int_cov","curr_ratio",
-        "roic","roc_greenblatt","ebit_ev_yield","roe","roa","gross_margin","op_margin","net_margin","fcf_margin",
-        "rev_cagr_1y","rev_cagr_3y","rev_cagr_5y","rev_cagr_10y",
-        "eps_cagr_1y","eps_cagr_3y","eps_cagr_5y","eps_cagr_10y",
-        "fcf_cagr_1y","fcf_cagr_3y","fcf_cagr_5y","fcf_cagr_10y",
-        "bvps_cagr_1y","bvps_cagr_3y","bvps_cagr_5y","bvps_cagr_10y",
-        "roic_avg_1y","roic_avg_3y","roic_avg_5y","roic_avg_10y","roic_improving",
-        "rule1_roic","rule1_eps","rule1_sales","rule1_equity","rule1_fcf",
-        "rule1_passes","longevity_score","longevity_rank",
-        "data_quality","next_earnings","eps_surprise",
-        "analyst_mean","analyst_rec","num_analysts","ret_1y","rsi","ma_ratio",
-    ]
+    """Upsert fundamentals into stocks.db (the authoritative store).
+
+    Each `s` is the SAME dict written to fundamentals.json above;
+    serializers.db_record projects it onto the Fundamentals columns, so the JSON
+    row and the DB row share one field list and the schema is declared once — in
+    database.py — with no parallel field list to maintain (issue #12)."""
     try:
         from database import SessionLocal, Fundamentals, init_db, upsert
+        from serializers import db_record
         from datetime import datetime as _dt
         init_db()
         db = SessionLocal()
         for s in stocks:
-            row = {"ticker": s["ticker"], "last_updated": _dt.utcnow()}
-            for f in _FUND_FIELDS:
-                if f in s:
-                    row[f] = s[f]
+            row = db_record(Fundamentals, s)
+            row["last_updated"] = _dt.utcnow()
             upsert(db, Fundamentals, row)
         db.commit()
         db.close()

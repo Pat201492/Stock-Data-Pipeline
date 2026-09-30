@@ -535,25 +535,21 @@ def main():
 
 
 def _save_to_db(universe):
+    """Upsert the ranked universe into stocks.db (the authoritative store).
+
+    Each entry `s` is the SAME dict already written to universe.json above;
+    serializers.db_record projects it onto the Stock columns so the JSON row and
+    the DB row can't drift and the schema lives in one place (issue #12)."""
     try:
         from database import SessionLocal, Stock, init_db, upsert
+        from serializers import db_record
         from datetime import datetime as _dt
         init_db()
         db = SessionLocal()
         for s in universe:
-            upsert(db, Stock, {
-                "ticker":       s["ticker"],
-                "name":         s.get("name", ""),
-                "sector":       s.get("sector", "Unknown"),
-                "industry":     s.get("industry", "Unknown"),
-                "country":      s.get("country", "Unknown"),
-                "mkt_cap":      s.get("mkt_cap", 0),
-                "cap_size":     s.get("cap_size", "Micro Cap"),
-                "price":        s.get("price", 0),
-                "exchange":     s.get("exchange", ""),
-                "rank":         s.get("rank", 9999),
-                "last_updated": _dt.utcnow(),
-            })
+            row = db_record(Stock, s)
+            row["last_updated"] = _dt.utcnow()
+            upsert(db, Stock, row)
         db.commit()
         db.close()
         print(f"  ✅ Saved {len(universe)} stocks to database")

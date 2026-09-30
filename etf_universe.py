@@ -51,6 +51,10 @@ def load_cache():
 
 
 def save_cache(c):
+    # NOT a dual-write of the ETF/ETFHolding tables — this is a fetch cache of
+    # sector weightings + timestamps that are NOT persisted in the DB, used only
+    # for incremental refresh. The ETF/ETFHolding tables are the source of truth
+    # for ETF data. See README "Persistence — source of truth" (issue #12).
     with open(CACHE_FILE, "w") as f:
         json.dump(c, f, indent=2)
 
