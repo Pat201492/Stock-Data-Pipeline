@@ -203,42 +203,43 @@ def _process_ticker(sym, r, q):
 
 
 def main():
-    watch = _load_watchlist()
-    if not watch:
-        print("No watchlist tickers — run universe.py first."); return
-    r = _risk_free()
-    dy = _div_yields()
-    print(f"Options feed — {len(watch)} tickers, ≤{MAX_EXP} expirations each, r={r:.3%}")
+    with config.yfinance_lock():
+        watch = _load_watchlist()
+        if not watch:
+            print("No watchlist tickers — run universe.py first."); return
+        r = _risk_free()
+        dy = _div_yields()
+        print(f"Options feed — {len(watch)} tickers, ≤{MAX_EXP} expirations each, r={r:.3%}")
 
-    out, asof = {}, datetime.utcnow().strftime("%Y-%m-%d")
+        out, asof = {}, datetime.utcnow().strftime("%Y-%m-%d")
 
-    def fetch_batch(batch):
-        """run_batches fetch_fn: process a batch of tickers, returning the usual
-        (results, failed). A whole batch failing is the rate-limit signal that
-        trips the shared backoff in run_batches — the same path fundamentals and
-        model use."""
-        results, failed = {}, []
-        for sym in batch:
-            try:
-                res = _process_ticker(sym, r, dy.get(sym, 0.0))
-            except Exception as e:
-                print(f"  ⚠️  {sym}: {e}"); res = None
-            if res:
-                res["asof"] = asof
-                results[sym] = res
-                s = res["summary"]
-                print(f"  {sym:<6} spot {s['spot']:>8}  ATM IV {s['atm_iv']}  P/C {s['put_call_oi']}")
-            else:
-                failed.append(sym)
-        return results, failed
+        def fetch_batch(batch):
+            """run_batches fetch_fn: process a batch of tickers, returning the usual
+            (results, failed). A whole batch failing is the rate-limit signal that
+            trips the shared backoff in run_batches — the same path fundamentals and
+            model use."""
+            results, failed = {}, []
+            for sym in batch:
+                try:
+                    res = _process_ticker(sym, r, dy.get(sym, 0.0))
+                except Exception as e:
+                    print(f"  ⚠️  {sym}: {e}"); res = None
+                if res:
+                    res["asof"] = asof
+                    results[sym] = res
+                    s = res["summary"]
+                    print(f"  {sym:<6} spot {s['spot']:>8}  ATM IV {s['atm_iv']}  P/C {s['put_call_oi']}")
+                else:
+                    failed.append(sym)
+            return results, failed
 
-    # run_batches owns pacing, the whole-batch backoff, and incremental saves to
-    # OUT (the output is already {ticker: record}, so the cache IS the output).
-    run_batches(watch, fetch_batch, out, OUT)
+        # run_batches owns pacing, the whole-batch backoff, and incremental saves to
+        # OUT (the output is already {ticker: record}, so the cache IS the output).
+        run_batches(watch, fetch_batch, out, OUT)
 
-    with open(OUT, "w") as f:
-        json.dump(out, f, indent=2)
-    print(f"\n✅ Wrote options for {len(out)} tickers → {OUT}")
+        with open(OUT, "w") as f:
+            json.dump(out, f, indent=2)
+        print(f"\n✅ Wrote options for {len(out)} tickers → {OUT}")
 
 
 if __name__ == "__main__":

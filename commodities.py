@@ -170,67 +170,69 @@ def _fred_overlay(series_id):
 
 
 def main():
-    print("Commodities feed — fetching futures via yfinance …")
-    symbols = list(COMMODITIES.keys())
-    # 5y daily closes — 1y metrics come from the tail; monthly averages +
-    # seasonality need the multi-year span (crop cycles, seasonal logistics).
-    # Shared wrapper: paces the call and backs off on a rate-limit signal before
-    # giving up. A persistent 429 raises through, and the empty-snapshot guard
-    # below then keeps the existing commodities.json rather than clobbering it.
-    try:
-        data = yf_client.yf_download(symbols, period="5y", interval="1d",
-                                     group_by="ticker", progress=False, threads=True)
-    except Exception as e:
-        print(f"  ⚠️  yfinance download failed: {e}")
-        data = None
-
-    snapshot = []
-    asof = datetime.utcnow().strftime("%Y-%m-%d")
-    for sym, (name, group, fred_series) in COMMODITIES.items():
+    with config.yfinance_lock():
+        print("Commodities feed — fetching futures via yfinance …")
+        symbols = list(COMMODITIES.keys())
+        # 5y daily closes — 1y metrics come from the tail; monthly averages +
+        # seasonality need the multi-year span (crop cycles, seasonal logistics).
+        # Shared wrapper: paces the call and backs off on a rate-limit signal before
+        # giving up. A persistent 429 raises through, and the empty-snapshot guard
+        # below then keeps the existing commodities.json rather than clobbering it.
         try:
-            hist = data[sym] if len(symbols) > 1 else data
-            m = _metrics_from_history(hist)
+            data = yf_client.yf_download(symbols, period="5y", interval="1d",
+                                         group_by="ticker", progress=False, threads=True)
         except Exception as e:
-            print(f"  ⚠️  {sym} {name}: {e}")
-            m = None
-        if not m:
-            continue
-        row = {"root": sym, "name": name, "group": group, "asof": asof, **m}
-        overlay = _fred_overlay(fred_series)
-        if overlay:
-            row["fred"] = overlay  # official spot + change + sparkline
-        snapshot.append(row)
-        print(f"  {name:<14} {m['price']:>10}  1d {str(m['chg_1d']):>6}%  vol {m['vol_20d']}")
+            print(f"  ⚠️  yfinance download failed: {e}")
+            data = None
 
-    # Guard: never clobber a good output with an empty one (e.g. a yfinance rate
-    # limit fails every download). Leave the last snapshot in place and bail.
-    if not snapshot:
-        print("\n⚠️  0 commodities fetched (rate-limited or all delisted?) — "
-              "keeping existing commodities.json, not overwriting.")
-        return
+        snapshot = []
+        asof = datetime.utcnow().strftime("%Y-%m-%d")
+        if data is not None:
+            for sym, (name, group, fred_series) in COMMODITIES.items():
+                try:
+                    hist = data[sym] if len(symbols) > 1 else data
+                    m = _metrics_from_history(hist)
+                except Exception as e:
+                    print(f"  ⚠️  {sym} {name}: {e}")
+                    m = None
+                if not m:
+                    continue
+                row = {"root": sym, "name": name, "group": group, "asof": asof, **m}
+                overlay = _fred_overlay(fred_series)
+                if overlay:
+                    row["fred"] = overlay  # official spot + change + sparkline
+                snapshot.append(row)
+                print(f"  {name:<14} {m['price']:>10}  1d {str(m['chg_1d']):>6}%  vol {m['vol_20d']}")
 
-    # group for the dashboard cards
-    grouped = {}
-    for r in snapshot:
-        grouped.setdefault(r["group"], []).append(r)
+        # Guard: never clobber a good output with an empty one (e.g. a yfinance rate
+        # limit fails every download). Leave the last snapshot in place and bail.
+        if not snapshot:
+            print("\n⚠️  0 commodities fetched (rate-limited or all delisted?) — "
+                  "keeping existing commodities.json, not overwriting.")
+            return
 
-    out = {"asof": asof, "count": len(snapshot), "groups": grouped, "commodities": snapshot}
-    with open(OUT, "w") as f:
-        json.dump(out, f, indent=2)
-    print(f"\n✅ Wrote {len(snapshot)} commodities → {OUT}")
+        # group for the dashboard cards
+        grouped = {}
+        for r in snapshot:
+            grouped.setdefault(r["group"], []).append(r)
 
-    # append history (one row per root per run) — keeps vol/range honest over time
-    history = []
-    if os.path.exists(HIST):
-        try:
-            history = json.load(open(HIST))
-        except Exception:
-            history = []
-    for r in snapshot:
-        history.append({"asof": asof, "root": r["root"], "price": r["price"]})
-    with open(HIST, "w") as f:
-        json.dump(history, f)
-    print(f"✅ Appended {len(snapshot)} rows → {HIST}")
+        out = {"asof": asof, "count": len(snapshot), "groups": grouped, "commodities": snapshot}
+        with open(OUT, "w") as f:
+            json.dump(out, f, indent=2)
+        print(f"\n✅ Wrote {len(snapshot)} commodities → {OUT}")
+
+        # append history (one row per root per run) — keeps vol/range honest over time
+        history = []
+        if os.path.exists(HIST):
+            try:
+                history = json.load(open(HIST))
+            except Exception:
+                history = []
+        for r in snapshot:
+            history.append({"asof": asof, "root": r["root"], "price": r["price"]})
+        with open(HIST, "w") as f:
+            json.dump(history, f)
+        print(f"✅ Appended {len(snapshot)} rows → {HIST}")
 
 
 if __name__ == "__main__":

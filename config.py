@@ -71,3 +71,61 @@ OPTIONS_TOP_N   = int(os.environ.get("OPTIONS_TOP_N", "25"))
 OPTIONS_MAX_EXP = int(os.environ.get("OPTIONS_MAX_EXP", "6"))
 EXPOSURE_COMPUTE = os.environ.get("EXPOSURE_COMPUTE") == "1"
 RUN_SCHEDULER    = os.environ.get("RUN_SCHEDULER") == "1"
+
+# ── yfinance lock (prevent multiple collectors running simultaneously) ──────
+YFINANCE_LOCK_PATH = data_path(".yfinance.lock")
+
+
+import contextlib, sys, time
+
+
+@contextlib.contextmanager
+def yfinance_lock(wait_timeout=30, poll_interval=1):
+    """Context manager for cross-process yfinance lock.
+    Acquired by any script hitting yfinance to prevent concurrent collectors.
+    If lock cannot be acquired within wait_timeout, exits with clear message.
+
+    Usage:
+        with yfinance_lock():
+            # yfinance operations here
+    """
+    lock_file = None
+    try:
+        lock_file = open(YFINANCE_LOCK_PATH, "w")
+        start = time.time()
+        acquired = False
+
+        while time.time() - start < wait_timeout:
+            try:
+                if sys.platform == "win32":
+                    import msvcrt
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
+                break
+            except (OSError, IOError, BlockingIOError):
+                time.sleep(poll_interval)
+
+        if not acquired:
+            print("Another collector is already running - try again in a moment.")
+            sys.stdout.flush()
+            sys.exit(1)
+
+        yield
+    finally:
+        if lock_file:
+            try:
+                if sys.platform == "win32":
+                    import msvcrt
+                    try:
+                        msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+                    except (OSError, IOError):
+                        pass
+                else:
+                    import fcntl
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            except (OSError, IOError):
+                pass
+            lock_file.close()

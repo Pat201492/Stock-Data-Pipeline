@@ -174,9 +174,14 @@ def main():
     compute = config.EXPOSURE_COMPUTE
     asof = datetime.utcnow().strftime("%Y-%m-%d")
 
-    # curated always; computed optionally
+    # curated always; computed optionally (computed hits yfinance, needs lock)
     tickers = sorted(CURATED_EXPOSURE.keys())
-    computed = _compute(tickers) if compute else {}
+
+    if compute:
+        with config.yfinance_lock():
+            computed = _compute(tickers)
+    else:
+        computed = {}
 
     out = {}
     for t in tickers:
