@@ -40,8 +40,9 @@ Political + macro refreshers run alongside (not in the core `run.py` chain):
 | Discover universe | `universe.py` | NASDAQ Trader FTP (+ Wikipedia / iShares fallback) | `universe.json` |
 | Fundamentals | `fundamentals.py` | yfinance (batched) | `fundamentals.json` (+ data_quality) |
 | Valuation/score | `model.py` | DCF + Comps + EPV/Graham | `model.json` |
-| News + sentiment | `news.py` | yfinance news + TextBlob | DB (News) |
-| ETFs | `etf_universe.py` | yfinance / holdings | ETF data |
+| News + sentiment | `news.py` | yfinance news + TextBlob | DB (News) → `/api/news` |
+| Price history | `news.py` | yfinance daily bars | DB (PriceHistory) → `/api/stocks/{t}/history` |
+| ETFs | `etf_universe.py` | yfinance / holdings | DB (ETF/ETFHolding) → `/api/etfs` |
 | Macro | `fred.py` | FRED (St. Louis Fed) | macro series |
 | Congress/insider | `ingest_*`, `pol_refresh.py` | Senate/House disclosures, SEC EDGAR | `politicians.db` |
 | Maintenance | `backfill_eps.py`, `validate.py`, `deepdive.py`, `sheets.py` | — | fixes / exports |
@@ -52,9 +53,12 @@ Shared modules: `database.py` (SQLAlchemy models — `stocks.db`), `politicians_
 
 ## Outputs (what consumers read)
 - **Databases:** `stocks.db`, `politicians.db`, `accounts.db` (gitignored — large, rebuilt).
-- **JSON:** `universe.json`, `fundamentals.json`, `model.json`, ETF data (gitignored — generated).
+- **JSON:** `universe.json`, `fundamentals.json`, `model.json` (gitignored — generated).
+- **DB-only datasets:** news + sentiment, price history, and ETFs/holdings live only
+  in `stocks.db` (no JSON export). They are served through the API
+  (`/api/news`, `/api/stocks/{t}/history`, `/api/etfs`) so consumers never open the DB.
 
-These are **not** in git. They are produced by running the pipeline and shared with consumers at **runtime**.
+These are **not** in git. They are produced by running the pipeline and shared with consumers at **runtime**. Every dataset listed as a pipeline output is reachable through an `/api/...` route — no consumer reads `stocks.db` directly.
 
 ## Persistence — source of truth (issue #12)
 
@@ -123,9 +127,16 @@ uvicorn api:app --port 8000
 | `GET /api/commodities/{root}` | one commodity (e.g. `GC=F`) |
 | `GET /api/options/{ticker}` | summary (ATM IV, put/call, OI) + expiration list |
 | `GET /api/options/{ticker}/{expiration}` | full calls/puts grid + Greeks |
+| `GET /api/news` | latest news + sentiment; filters `ticker,limit` |
+| `GET /api/stocks/{ticker}/news` | news + sentiment for one ticker |
+| `GET /api/stocks/{ticker}/history` | daily close/volume series (default ~1y) |
+| `GET /api/etfs` | list ETFs; filters `asset_class,category,search`, `sort/order/limit/offset` |
+| `GET /api/etfs/{ticker}` | one ETF + weight-ranked holdings |
 
 JSON outputs are re-read with a 5-min TTL, so a nightly run is picked up
-without a restart.
+without a restart. The DB-only datasets (news / price history / ETFs) have no
+JSON export — the API queries `stocks.db` (the authoritative store, see
+"Persistence" above) directly, behind the same 5-min TTL cache.
 
 ## Consuming the data — runtime sharing (decided: API)
 | Model | How consumers read | Notes |
@@ -151,7 +162,7 @@ python run.py
 
 ## ⚠️ Open Items
 - [ ] **Runtime sharing mechanism** — pick Service (API) / shared DB / artifacts. Recommend Service.
-- [ ] **Migrate the read-only data API** (`/api/stocks`, `/api/stocks/{ticker}`, news/fed/politicians routes) from the old `server.py` into this repo. App-only routes (auth/accounts/static) stay in Stock-App. *(Unblocked by issue #12: DB and JSON now share one field list, so the API can query the tables directly without a response-shape change — see "Persistence" above.)*
+- [ ] **Migrate the read-only data API** from the old `server.py` into this repo. Done: `/api/stocks`, `/api/stocks/{ticker}`, and the DB-only news/history/ETF routes (issue #13). Still pending: fed/politicians routes. App-only routes (auth/accounts/static) stay in Stock-App. *(Unblocked by issue #12: DB and JSON now share one field list, so the API can query the tables directly without a response-shape change — see "Persistence" above.)*
 - [ ] **Hosting** — one collector only (local daily `run.py` OR Fly cron `scheduler.py`), not both. Cost-driven.
 - [ ] **Secrets** — move the Google service-account key (`sheets.py`) and `FRED_API_KEY` to env/secret manager; confirm the key was never committed.
 - [ ] **Options-chain feed** — Trader-Screener's `options.py` should be added HERE (shared pipeline) so the old app gets it too.
