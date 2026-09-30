@@ -12,7 +12,7 @@ Run: PYTHONUTF8=1 .venv/Scripts/python backfill_eps.py
 import sqlite3, time
 from concurrent.futures import ThreadPoolExecutor
 
-import yfinance as yf
+from yf_client import yf_ticker
 from fundamentals import _eps_surprise, _next_earnings_from_df
 
 DB = "stocks.db"
@@ -26,7 +26,7 @@ def fetch(ticker):
     edf = None
     for attempt in range(RETRIES):
         try:
-            edf = yf.Ticker(ticker).get_earnings_dates(limit=12)
+            edf = yf_ticker(ticker).get_earnings_dates(limit=12)
             if edf is not None and len(edf) > 0:
                 break
         except Exception:

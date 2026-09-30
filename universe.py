@@ -3,7 +3,7 @@ universe.py — Build the stock universe
 =======================================
 Three phases:
   1. DISCOVER  ~8000 raw tickers from NASDAQ Trader FTP (no yfinance needed)
-  2. ENRICH    batch yf.Tickers calls → market cap, sector, price
+  2. ENRICH    batched yf_client calls → market cap, sector, price
   3. RANK      sort by market cap descending, save top TARGET stocks
 
 Primary source: NASDAQ Trader FTP plain-text files (updated daily since ~2005)
@@ -29,18 +29,18 @@ from urllib.error import URLError
 warnings.filterwarnings("ignore")
 
 import yfinance as yf
+from yf_client import yf_tickers
+from data_utils import run_batches
 import config
 
 OUTPUT_FILE  = config.UNIVERSE_JSON
 CACHE_FILE   = config.UNIVERSE_CACHE_JSON
 TARGET       = 2500
-# Env-tunable pacing (single source: config.py) — slow down to dodge yfinance
-# rate limits on big runs.
-ENRICH_BATCH = config.YF_BATCH
-SLEEP_SEC    = config.YF_SLEEP
-YF_BACKOFF   = config.YF_BACKOFF  # hard sleep on rate-limit signal
-MAX_RETRIES  = 3
-STALE_DAYS   = 7   # re-enrich if DB record older than this
+# yfinance pacing is NOT duplicated here — enrich() runs on data_utils.run_batches,
+# which reads the canonical YF_* knobs from config.py. DISCOVERY_RETRIES governs
+# only the plain-HTTP source fetches below (NASDAQ / Wikipedia / iShares).
+DISCOVERY_RETRIES = 3
+STALE_DAYS        = 7   # re-enrich if DB record older than this
 
 NASDAQ_API_URL  = "https://api.nasdaq.com/api/screener/stocks?tableonly=true&limit=10000&offset=0&download=true"
 NASDAQ_FTP_URLS = [
@@ -179,16 +179,16 @@ def clean_ticker(raw):
 
 def _retry(fn, label):
     """Run fn() with exponential backoff. Returns result or None on failure."""
-    for attempt in range(MAX_RETRIES):
+    for attempt in range(DISCOVERY_RETRIES):
         try:
             return fn()
         except Exception as e:
-            if attempt < MAX_RETRIES - 1:
-                wait = SLEEP_SEC * (attempt + 1)
+            if attempt < DISCOVERY_RETRIES - 1:
+                wait = 2 * (attempt + 1)
                 print(f"    Attempt {attempt+1} failed ({label}): {e} — retry in {wait}s")
                 time.sleep(wait)
             else:
-                print(f"    ❌ Failed after {MAX_RETRIES} attempts ({label}): {e}")
+                print(f"    ❌ Failed after {DISCOVERY_RETRIES} attempts ({label}): {e}")
     return None
 
 
@@ -364,17 +364,19 @@ def fetch_ishares():
 
 # ── Phase 2: Enrichment ───────────────────────────────────────────
 
-def _enrich_batch(batch, cache):
-    """Fetch metadata for one batch of tickers. Returns list of tickers that failed."""
-    failed = []
+def _enrich_batch(batch):
+    """run_batches fetch_fn: fetch metadata for one batch of tickers via the
+    shared yf_tickers wrapper. Returns (results, failed). A ticker with no data
+    at all is neither cached nor marked failed — future runs retry it naturally."""
+    results, failed = {}, []
     try:
-        group = yf.Tickers(" ".join(batch))
+        group = yf_tickers(batch)
         for ticker in batch:
             try:
                 info = group.tickers[ticker].info or {}
                 mc   = info.get("marketCap") or 0
                 if mc > 0 or info.get("longName") or info.get("shortName"):
-                    cache[ticker] = {
+                    results[ticker] = {
                         "ticker":   ticker,
                         "name":     info.get("longName") or info.get("shortName", ""),
                         "sector":   info.get("sector", "Unknown"),
@@ -385,12 +387,11 @@ def _enrich_batch(batch, cache):
                         "price":    info.get("currentPrice") or info.get("regularMarketPrice") or 0,
                         "exchange": info.get("exchange", ""),
                     }
-                # If no data at all, don't cache — let future runs retry naturally
             except Exception:
                 failed.append(ticker)
     except Exception:
         failed.extend(batch)
-    return failed
+    return results, failed
 
 
 def _fresh_in_db(tickers):
@@ -407,50 +408,15 @@ def _fresh_in_db(tickers):
 
 
 def enrich(tickers, cache):
+    # Skip anything already fresh in the DB; run_batches skips anything already
+    # in the cache and owns the batching, pacing, whole-batch backoff and retry
+    # pass — no hand-rolled loop or duplicate pacing knobs here.
     fresh = _fresh_in_db(tickers)
-    need = [t for t in tickers if t not in cache and t not in fresh]
-    skipped = len(tickers) - len(need)
+    candidates = [t for t in tickers if t not in fresh]
+    skipped = len(tickers) - len(candidates)
     if skipped:
-        print(f"  Skipping {skipped} tickers (fresh in DB or cache)")
-    if not need:
-        print(f"  All {len(tickers)} tickers are fresh — nothing to enrich")
-        return cache
-
-    total = len(need)
-    pages = (total + ENRICH_BATCH - 1) // ENRICH_BATCH
-    print(f"  Enriching {total} tickers ({pages} batches of {ENRICH_BATCH}) …")
-
-    failed = []
-    for i in range(0, total, ENRICH_BATCH):
-        batch = need[i:i + ENRICH_BATCH]
-        page  = i // ENRICH_BATCH + 1
-        if page == 1 or page % 10 == 0 or page == pages:
-            print(f"    Batch {page:>4}/{pages}  ({i+1}–{min(i+ENRICH_BATCH, total)})  {round(i/total*100)}%")
-        batch_failed = _enrich_batch(batch, cache)
-        failed.extend(batch_failed)
-        save_cache(cache)
-        # Whole batch failing is the rate-limit signal — back off hard so the
-        # rest of the universe isn't lost (this is why we only got 539/2500).
-        if batch_failed and len(batch_failed) == len(batch):
-            print(f"    ⚠️  batch {page} fully failed — backing off {YF_BACKOFF}s (rate limit?)")
-            time.sleep(YF_BACKOFF)
-        else:
-            time.sleep(SLEEP_SEC)
-
-    # One retry pass for anything that failed
-    failed = list(set(failed))
-    if failed:
-        print(f"  Retrying {len(failed)} failed tickers (waiting {YF_BACKOFF}s first) …")
-        time.sleep(YF_BACKOFF)
-        still_failed = []
-        for i in range(0, len(failed), ENRICH_BATCH):
-            still_failed.extend(_enrich_batch(failed[i:i + ENRICH_BATCH], cache))
-            save_cache(cache)
-            time.sleep(SLEEP_SEC)
-        if still_failed:
-            print(f"  ⚠️  No data for {len(still_failed)} tickers — excluded from universe")
-
-    return cache
+        print(f"  Skipping {skipped} tickers (fresh in DB)")
+    return run_batches(candidates, _enrich_batch, cache, CACHE_FILE)
 
 
 # ── Phase 3: Ranking + output ─────────────────────────────────────
@@ -496,7 +462,7 @@ def main():
         unique = list(dict.fromkeys(t for t in FALLBACK_TICKERS if t))
 
     # ── Enrich ────────────────────────────────────────────────────
-    print("\n─── Enriching via yf.Tickers batches ───")
+    print("\n─── Enriching via yf_client batches ───")
     cache = enrich(unique, cache)
 
     # ── Rank ──────────────────────────────────────────────────────
