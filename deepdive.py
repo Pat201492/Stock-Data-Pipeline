@@ -28,7 +28,7 @@ import urllib.request, urllib.parse, urllib.error
 from datetime import datetime, timedelta
 warnings.filterwarnings("ignore")
 
-import yfinance as yf
+from yf_client import yf_ticker
 import numpy as np
 
 from openpyxl import Workbook
@@ -161,7 +161,7 @@ def fetch_news(ticker, company_name):
     #           "canonicalUrl": {"url": ...}, "provider": {"displayName": ...}}}
     # We handle both by checking both locations for each field.
     try:
-        yft  = yf.Ticker(ticker)
+        yft  = yf_ticker(ticker)
         news = yft.news or []
         found_urls = 0
         for n in news[:30]:
@@ -304,7 +304,7 @@ def fetch_news(ticker, company_name):
 
 def fetch_deep(ticker):
     print(f"  Fetching {ticker} …")
-    yft    = yf.Ticker(ticker)
+    yft    = yf_ticker(ticker)
     record = extract_fundamentals(ticker, yft)
 
     info = {}

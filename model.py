@@ -38,7 +38,7 @@ from collections import defaultdict
 warnings.filterwarnings("ignore")
 
 import numpy as np
-import yfinance as yf
+from yf_client import yf_tickers
 from data_utils import sf, fmt, ratio, load_cache, save_cache, run_batches, score_stock
 import config
 
@@ -734,7 +734,7 @@ def fetch_momentum_batch(tickers):
     """Fetch 1yr price history for RSI + moving average signals."""
     results, failed = {}, []
     try:
-        group = yf.Tickers(" ".join(tickers))
+        group = yf_tickers(tickers)
         for ticker in tickers:
             try:
                 hist   = group.tickers[ticker].history(period="1y", interval="1d")

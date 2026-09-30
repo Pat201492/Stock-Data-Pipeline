@@ -2,7 +2,7 @@
 fundamentals.py — Fetch and compute all fundamental data
 =========================================================
 Reads universe.json for ticker order.
-Batch-fetches via yf.Tickers (one API call per batch of 20).
+Batch-fetches via the yf_client wrapper (one API call per batch of 20).
 Uses data_utils.py for robust field extraction with multiple
 fallback names — handles yfinance inconsistencies across versions.
 Assigns a data_quality score (0-100) to every stock.
@@ -15,11 +15,11 @@ Run:      python3 fundamentals.py
 Schedule: 0 2 * * 1-5   (weeknights 2am)
 """
 
-import json, os, time, warnings
+import json, os, time, warnings, logging
 from datetime import datetime
 warnings.filterwarnings("ignore")
 
-import yfinance as yf
+from yf_client import yf_tickers
 from data_utils import (
     sf, fmt, pct, ratio, cagr,
     get_row, first_valid, second_valid, series_values, series_cagr,
@@ -28,6 +28,122 @@ from data_utils import (
 )
 
 import config
+import xbrl_fundamentals
+from xbrl_fundamentals import inputs_from_companyfacts
+
+log = logging.getLogger(__name__)
+
+
+# ── As-filed XBRL Magic Formula inputs (issue #17) ──────────────────────────────
+# Trader-Screener #241 accepted the as-filed XBRL computation of roc_greenblatt /
+# ebit_ev_yield as source of truth, yfinance as the per-leg fallback. The reading
+# side lives in xbrl_fundamentals.py; here we resolve a ticker's CIK, load its
+# companyfacts, and prefer the XBRL legs where present.
+
+_COMPANY_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
+_cik_map = None       # ticker -> CIK, loaded once from company_tickers.json
+_xbrl_warned = False  # so a run with SEC_USER_AGENT unset logs exactly one warning
+
+
+def _sec_user_agent_ok():
+    """True when SEC_USER_AGENT is set. When unset, log ONE warning per run and
+    return False so every row falls back to yfinance (the run does not fail)."""
+    global _xbrl_warned
+    if os.environ.get("SEC_USER_AGENT", "").strip():
+        return True
+    if not _xbrl_warned:
+        log.warning(
+            "SEC_USER_AGENT not set — skipping as-filed XBRL Magic Formula "
+            "inputs for this run; every row falls back to yfinance."
+        )
+        _xbrl_warned = True
+    return False
+
+
+def _load_company_tickers(opener=None):
+    """ticker -> CIK map from SEC company_tickers.json, cached like companyfacts
+    under DATA_DIR/xbrl_cache/. Caller must have checked SEC_USER_AGENT first."""
+    import urllib.request
+    cache = xbrl_fundamentals._cache_dir() / "company_tickers.json"
+    if cache.exists():
+        raw = cache.read_text(encoding="utf-8")
+    else:
+        ua = os.environ.get("SEC_USER_AGENT", "").strip()
+        req = urllib.request.Request(_COMPANY_TICKERS_URL, headers={"User-Agent": ua})
+        xbrl_fundamentals._throttle()
+        open_url = opener or urllib.request.urlopen
+        with open_url(req) as resp:
+            raw = resp.read().decode("utf-8")
+        cache.write_text(raw, encoding="utf-8")
+    data = json.loads(raw)
+    return {row["ticker"].upper(): row["cik_str"] for row in data.values()}
+
+
+def _cik_for_ticker(ticker):
+    """Resolve a ticker to its SEC CIK, or None when SEC does not list it."""
+    global _cik_map
+    if _cik_map is None:
+        _cik_map = _load_company_tickers()
+    return _cik_map.get(ticker.upper())
+
+
+def _companyfacts_for_ticker(ticker):
+    """The parsed SEC companyfacts document for a ticker, or None when its CIK
+    does not resolve. Tests patch THIS seam to supply a fixture without network."""
+    cik = _cik_for_ticker(ticker)
+    if cik is None:
+        return None
+    return xbrl_fundamentals.fetch_companyfacts(cik)
+
+
+def _magic_formula(ticker, mkt_cap, yf_roc, yf_eey):
+    """Prefer as-filed XBRL for the two Magic Formula legs, yfinance per leg as
+    fallback. Returns the record fields: roc_greenblatt, ebit_ev_yield,
+    magic_source ("xbrl"|"yfinance"|"mixed"), magic_period_end, magic_accession,
+    magic_derived (comma-joined #259 rule names, or None)."""
+    yf_only = {
+        "roc_greenblatt": yf_roc, "ebit_ev_yield": yf_eey,
+        "magic_source": "yfinance", "magic_period_end": None,
+        "magic_accession": None, "magic_derived": None,
+    }
+
+    if not _sec_user_agent_ok():
+        return yf_only
+
+    try:
+        cf = _companyfacts_for_ticker(ticker)
+    except Exception as e:
+        log.warning("XBRL companyfacts fetch failed for %s: %s", ticker, e)
+        return yf_only
+    if cf is None:
+        return yf_only
+
+    inp = inputs_from_companyfacts(cf)
+
+    xbrl_roc = roc_greenblatt(inp["operating_income"], inp["assets_current"],
+                              inp["liabilities_current"], inp["ppe_net"])
+    # total debt = long_term_debt + short_term_debt (both must be present)
+    ltd, std = inp["long_term_debt"], inp["short_term_debt"]
+    total_debt = (ltd + std) if (ltd is not None and std is not None) else None
+    xbrl_eey = ebit_ev_yield(inp["operating_income"], mkt_cap or None,
+                             total_debt, inp["cash"])
+
+    roc = xbrl_roc if xbrl_roc is not None else yf_roc
+    eey = xbrl_eey if xbrl_eey is not None else yf_eey
+    srcs = {
+        "xbrl" if xbrl_roc is not None else "yfinance",
+        "xbrl" if xbrl_eey is not None else "yfinance",
+    }
+    source = srcs.pop() if len(srcs) == 1 else "mixed"
+
+    return {
+        "roc_greenblatt": roc,
+        "ebit_ev_yield": eey,
+        "magic_source": source,
+        "magic_period_end": inp.get("period_end"),
+        "magic_accession": inp.get("accession"),
+        "magic_derived": ",".join(inp.get("derived") or []) or None,
+    }
 
 UNIVERSE_FILE = config.UNIVERSE_JSON
 CACHE_FILE    = config.FUNDAMENTALS_CACHE_JSON
@@ -423,10 +539,12 @@ def extract_fundamentals(ticker, yft):
 
     # Magic Formula legs (Trader-Screener #248). Raw first_valid values, NOT the
     # `or 0` scalars above: a missing line must yield None, never a fake 0.
-    roc_gb    = roc_greenblatt(first_valid(op_s), first_valid(ca_s),
+    # These are the yfinance fallback; _magic_formula prefers as-filed XBRL (#17).
+    yf_roc_gb = roc_greenblatt(first_valid(op_s), first_valid(ca_s),
                                first_valid(cl_s), first_valid(ppe_s))
-    ebit_ev_y = ebit_ev_yield(first_valid(op_s), mkt_cap or None,
-                              first_valid(debt_s), first_valid(cash_s))
+    yf_ebit_ev_y = ebit_ev_yield(first_valid(op_s), mkt_cap or None,
+                                 first_valid(debt_s), first_valid(cash_s))
+    magic = _magic_formula(ticker, mkt_cap, yf_roc_gb, yf_ebit_ev_y)
 
     record = {
         # Identity
@@ -506,8 +624,12 @@ def extract_fundamentals(ticker, yft):
         "roe":          roe,
         "roa":          roa,
         "roic":         roic,
-        "roc_greenblatt": roc_gb,
-        "ebit_ev_yield":  ebit_ev_y,
+        "roc_greenblatt": magic["roc_greenblatt"],
+        "ebit_ev_yield":  magic["ebit_ev_yield"],
+        "magic_source":     magic["magic_source"],
+        "magic_period_end": magic["magic_period_end"],
+        "magic_accession":  magic["magic_accession"],
+        "magic_derived":    magic["magic_derived"],
         "d_to_e":       d_to_e,
         "d_to_ebitda":  d_to_ebitda,
         "curr_ratio":   curr_ratio,
@@ -546,7 +668,7 @@ def fetch_batch(tickers):
     """Fetch one batch of tickers. Returns (results_dict, failed_list)."""
     results, failed = {}, []
     try:
-        group = yf.Tickers(" ".join(tickers))
+        group = yf_tickers(tickers)
         for ticker in tickers:
             try:
                 rec = extract_fundamentals(ticker, group.tickers[ticker])

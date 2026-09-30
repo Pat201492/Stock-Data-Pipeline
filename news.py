@@ -5,7 +5,7 @@ import time, warnings
 from datetime import datetime
 warnings.filterwarnings("ignore")
 
-import yfinance as yf
+from yf_client import yf_ticker
 from database import SessionLocal, News, Stock, PriceHistory, init_db
 
 try:
@@ -26,7 +26,7 @@ def sentiment_score(text):
 
 def fetch_and_store_news(ticker, db, limit=10):
     try:
-        t = yf.Ticker(ticker)
+        t = yf_ticker(ticker)
         articles = (t.news or [])[:limit]
     except Exception:
         return 0
@@ -90,7 +90,7 @@ def fetch_and_store_news(ticker, db, limit=10):
 
 def fetch_and_store_prices(ticker, db, period="1y"):
     try:
-        t    = yf.Ticker(ticker)
+        t    = yf_ticker(ticker)
         hist = t.history(period=period)
         if hist.empty:
             return 0

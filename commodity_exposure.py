@@ -140,11 +140,11 @@ def _returns(closes):
 def _compute(tickers):
     """Download stock + commodity history via yfinance, regress returns.
     Heavy + rate-limit-prone — only when EXPOSURE_COMPUTE=1 and pipeline idle."""
-    import yfinance as yf
+    import yf_client
     from commodities import COMMODITIES
     roots = list(COMMODITIES.keys())
-    comm = yf.download(roots, period="1y", interval="1d", group_by="ticker",
-                       progress=False, threads=True)
+    comm = yf_client.yf_download(roots, period="1y", interval="1d", group_by="ticker",
+                                 progress=False, threads=True)
     comm_ret = {}
     for r in roots:
         try:
@@ -156,7 +156,7 @@ def _compute(tickers):
     out = {}
     for t in tickers:
         try:
-            h = yf.Ticker(t).history(period="1y")
+            h = yf_client.yf_ticker(t).history(period="1y")
             sret = _returns([float(c) for c in h["Close"].dropna().tolist()])
         except Exception:
             continue

@@ -15,7 +15,7 @@ import json, os, time, warnings
 from datetime import datetime, timedelta
 warnings.filterwarnings("ignore")
 
-import yfinance as yf
+from yf_client import yf_ticker
 from database import SessionLocal, ETF, ETFHolding, Valuation, init_db, upsert
 import config
 
@@ -96,7 +96,7 @@ def _score_map(db, tickers):
 
 
 def enrich_one(ticker, db):
-    t = yf.Ticker(ticker)
+    t = yf_ticker(ticker)
     info = {}
     try:
         info = t.info or {}

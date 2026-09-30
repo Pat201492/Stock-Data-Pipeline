@@ -19,7 +19,7 @@ import json, os, math, warnings
 from datetime import datetime
 warnings.filterwarnings("ignore")
 
-import yfinance as yf
+import yf_client
 
 try:
     import fred
@@ -175,26 +175,34 @@ def main():
         symbols = list(COMMODITIES.keys())
         # 5y daily closes — 1y metrics come from the tail; monthly averages +
         # seasonality need the multi-year span (crop cycles, seasonal logistics).
-        data = yf.download(symbols, period="5y", interval="1d",
-                           group_by="ticker", progress=False, threads=True)
+        # Shared wrapper: paces the call and backs off on a rate-limit signal before
+        # giving up. A persistent 429 raises through, and the empty-snapshot guard
+        # below then keeps the existing commodities.json rather than clobbering it.
+        try:
+            data = yf_client.yf_download(symbols, period="5y", interval="1d",
+                                         group_by="ticker", progress=False, threads=True)
+        except Exception as e:
+            print(f"  ⚠️  yfinance download failed: {e}")
+            data = None
 
         snapshot = []
         asof = datetime.utcnow().strftime("%Y-%m-%d")
-        for sym, (name, group, fred_series) in COMMODITIES.items():
-            try:
-                hist = data[sym] if len(symbols) > 1 else data
-                m = _metrics_from_history(hist)
-            except Exception as e:
-                print(f"  ⚠️  {sym} {name}: {e}")
-                m = None
-            if not m:
-                continue
-            row = {"root": sym, "name": name, "group": group, "asof": asof, **m}
-            overlay = _fred_overlay(fred_series)
-            if overlay:
-                row["fred"] = overlay  # official spot + change + sparkline
-            snapshot.append(row)
-            print(f"  {name:<14} {m['price']:>10}  1d {str(m['chg_1d']):>6}%  vol {m['vol_20d']}")
+        if data is not None:
+            for sym, (name, group, fred_series) in COMMODITIES.items():
+                try:
+                    hist = data[sym] if len(symbols) > 1 else data
+                    m = _metrics_from_history(hist)
+                except Exception as e:
+                    print(f"  ⚠️  {sym} {name}: {e}")
+                    m = None
+                if not m:
+                    continue
+                row = {"root": sym, "name": name, "group": group, "asof": asof, **m}
+                overlay = _fred_overlay(fred_series)
+                if overlay:
+                    row["fred"] = overlay  # official spot + change + sparkline
+                snapshot.append(row)
+                print(f"  {name:<14} {m['price']:>10}  1d {str(m['chg_1d']):>6}%  vol {m['vol_20d']}")
 
         # Guard: never clobber a good output with an empty one (e.g. a yfinance rate
         # limit fails every download). Leave the last snapshot in place and bail.
