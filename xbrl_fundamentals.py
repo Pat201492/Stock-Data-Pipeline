@@ -55,6 +55,7 @@ CANONICAL = {
         "LongTermDebtNoncurrent",
         "LongTermDebt",
         "LongTermDebtAndCapitalLeaseObligations",
+        "LongTermNotesPayable",
     ),
     "short_term_debt": (
         "LongTermDebtCurrent",
@@ -78,6 +79,7 @@ _PRETAX_INCOME = (
     "ExtraordinaryItemsNoncontrollingInterest"
 )
 _INTEREST_NONOPERATING = "InterestExpenseNonoperating"
+_NET_INTEREST_NONOPERATING = "InterestIncomeExpenseNonoperatingNet"
 
 _ANNUAL_MIN_DAYS = 300
 _ANNUAL_MAX_DAYS = 380
@@ -174,6 +176,12 @@ def _apply_derivations(us_gaap, result, accession, period_end):
     * ``ebit=pretax+interest`` -- when `operating_income` resolved to nothing,
       reconstruct EBIT as pre-tax income + nonoperating interest expense for the
       same annual period. Both inputs must be present, or the rule does not fire.
+    * ``ebit=pretax-net_interest`` -- when neither `operating_income` nor
+      `InterestExpenseNonoperating` is tagged but pre-tax income and
+      `InterestIncomeExpenseNonoperatingNet` are present for the same annual
+      period, reconstruct EBIT as pre-tax income minus net nonoperating interest
+      (a positive net is interest *income*, so it is subtracted). The
+      ``pretax+interest`` rule above keeps precedence.
     """
     derived = []
 
@@ -191,6 +199,12 @@ def _apply_derivations(us_gaap, result, accession, period_end):
         if pretax is not None and interest is not None:
             result["operating_income"] = pretax + interest
             derived.append("ebit=pretax+interest")
+        elif pretax is not None:
+            net = _value_at(us_gaap, _NET_INTEREST_NONOPERATING, accession, period_end,
+                            annual=True)
+            if net is not None:
+                result["operating_income"] = pretax - net
+                derived.append("ebit=pretax-net_interest")
 
     return derived
 
