@@ -180,12 +180,15 @@ class News(Base):
 
 class PriceHistory(Base):
     __tablename__ = "price_history"
-    id     = Column(Integer, primary_key=True, autoincrement=True)
-    ticker = Column(String)
-    date   = Column(String)
+    # Composite PK (ticker, date) stored WITHOUT ROWID: the key lives once in the
+    # b-tree instead of once as rowid + again in a unique index. Measured −44 MB
+    # (−41%) on 1.66M live rows. Every read is by ticker ordered by date, which
+    # the PK's leading column already serves. See migrate_price_history.py.
+    ticker = Column(String, primary_key=True)
+    date   = Column(String, primary_key=True)
     close  = Column(Float)
     volume = Column(Float)
-    __table_args__ = (UniqueConstraint("ticker", "date", name="uq_price_ticker_date"),)
+    __table_args__ = {"sqlite_with_rowid": False}
 
 
 class ETF(Base):
