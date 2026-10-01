@@ -34,6 +34,18 @@ TTL = 300  # re-read JSON at most every 5 min
 app = FastAPI(title="Stock Data Pipeline API", version="1.0")
 
 
+def _run_pipeline():
+    """The nightly APScheduler job. Runs the SAME sequence as the CLI scheduler
+    (market, political, validate) in-process — not run.py alone (#48). A failing
+    step must never raise out of here, or APScheduler drops the job."""
+    import scheduler
+    try:
+        ok, results = scheduler.run_all()
+        print(f"nightly pipeline finished ok={ok} steps={results}", flush=True)
+    except Exception as e:
+        print(f"nightly pipeline crashed: {e}", flush=True)
+
+
 @app.on_event("startup")
 def _start_scheduler():
     """Run the nightly pipeline in-process so the API and cron share one machine
@@ -47,11 +59,6 @@ def _start_scheduler():
         return
     from apscheduler.schedulers.background import BackgroundScheduler
     from apscheduler.triggers.cron import CronTrigger
-
-    def _run_pipeline():
-        subprocess.run([sys.executable, os.path.join(SCRIPT_DIR, "run.py")],
-                       cwd=SCRIPT_DIR,
-                       env={**os.environ, "PYTHONIOENCODING": "utf-8"})
 
     sched = BackgroundScheduler(timezone="UTC")
     sched.add_job(_run_pipeline, CronTrigger(hour=2, minute=0),
@@ -183,7 +190,18 @@ def health():
     have = {f: os.path.exists(os.path.join(DATA_DIR, f))
             for f in ("universe.json", "fundamentals.json", "model.json",
                       "commodities.json", "options.json")}
-    return {"ok": True, "outputs": have}
+    # last_run.json is written by scheduler.run_all after each night. Report it
+    # (null before the first run). Status stays 200 even when the last run failed,
+    # so a bad night does not fail Fly's health check and restart the machine.
+    last_run = None
+    path = os.path.join(DATA_DIR, "last_run.json")
+    if os.path.exists(path):
+        try:
+            with open(path, encoding="utf-8") as f:
+                last_run = json.load(f)
+        except Exception:
+            last_run = None
+    return {"ok": True, "outputs": have, "last_run": last_run}
 
 
 # ── Stocks screener ───────────────────────────────────────────────────────────
