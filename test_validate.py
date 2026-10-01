@@ -162,17 +162,18 @@ def test_reads_config_paths_under_data_dir(tmp_path, monkeypatch):
 # ── run.py integration (stages stubbed) ──────────────────────────────────────
 
 def _stub_run(monkeypatch, validate_ok):
+    """Stub step execution so no real script/subprocess runs. run.py now drives
+    the shared step_runner, so stub step_runner._run_one (issue #35)."""
     import run
+    import step_runner
     calls = []
 
-    def fake_run_script(script, args=None):
-        calls.append((script, tuple(args or ())))
-        if script == "validate.py":
-            return validate_ok
-        return True
+    def fake_run_one(step, log):
+        calls.append((step.name, tuple(step.args)))
+        return validate_ok if step.name == "validate" else True
 
     import contextlib
-    monkeypatch.setattr(run, "run_script", fake_run_script)
+    monkeypatch.setattr(step_runner, "_run_one", fake_run_one)
     monkeypatch.setattr(run, "log", lambda *a, **k: None)
     monkeypatch.setattr(run.config, "yfinance_lock", contextlib.nullcontext)
     return run, calls
@@ -184,7 +185,7 @@ def test_run_runs_validate_last_and_fails(monkeypatch):
     with pytest.raises(SystemExit) as exc:
         run.main()
     assert exc.value.code == 1
-    assert calls[-1] == ("validate.py", ("--strict",))
+    assert calls[-1] == ("validate", ("--strict",))
 
 
 def test_run_validate_passes_exits_zero(monkeypatch):
@@ -193,7 +194,7 @@ def test_run_validate_passes_exits_zero(monkeypatch):
     with pytest.raises(SystemExit) as exc:
         run.main()
     assert exc.value.code == 0
-    assert calls[-1] == ("validate.py", ("--strict",))
+    assert calls[-1] == ("validate", ("--strict",))
 
 
 def test_run_skip_validate(monkeypatch):
@@ -202,7 +203,7 @@ def test_run_skip_validate(monkeypatch):
     with pytest.raises(SystemExit) as exc:
         run.main()
     assert exc.value.code == 0
-    assert all(s != "validate.py" for s, _ in calls)
+    assert all(s != "validate" for s, _ in calls)
 
 
 def test_run_from_still_ends_with_validate(monkeypatch):
@@ -211,8 +212,8 @@ def test_run_from_still_ends_with_validate(monkeypatch):
     with pytest.raises(SystemExit) as exc:
         run.main()
     assert exc.value.code == 0
-    assert calls[-1] == ("validate.py", ("--strict",))
-    assert calls[0][0] == "news.py"
+    assert calls[-1] == ("validate", ("--strict",))
+    assert calls[0][0] == "news"
 
 
 if __name__ == "__main__":
