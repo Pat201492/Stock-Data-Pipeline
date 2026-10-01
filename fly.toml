@@ -11,7 +11,10 @@ primary_region = 'ewr'
   DATA_DIR = "/data"            # volume: JSON outputs + SQLite DBs
   DB_PATH = "/data/stocks.db"
   POL_DB_PATH = "/data/politicians.db"
-  RUN_SCHEDULER = "1"           # in-process nightly cron (02:00 UTC) runs run.py
+  RUN_SCHEDULER = "1"           # in-process nightly cron (02:00 UTC) runs the FULL
+                                # sequence: run.py --skip-validate, pol_refresh.py,
+                                # then validate.py --strict (scheduler.run_all, #48).
+  # BOOTSTRAP_ON_EMPTY = "0"    # set to disable the cold-volume bootstrap (#49)
 
 [http_service]
   internal_port = 8080

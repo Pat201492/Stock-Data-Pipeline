@@ -13,7 +13,7 @@ Files are re-read with a short TTL so a nightly pipeline run is picked up
 without a server restart.
 """
 
-import json, os, sys, time, subprocess
+import json, os, sys, time, subprocess, threading
 from datetime import datetime
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Query
@@ -34,16 +34,43 @@ TTL = 300  # re-read JSON at most every 5 min
 app = FastAPI(title="Stock Data Pipeline API", version="1.0")
 
 
+# One lock guards every in-process pipeline run — the 02:00 cron job AND the
+# cold-volume bootstrap below. Held for the whole run so the two can never overlap
+# (a double-collect would contend on the DB and the /data volume).
+_pipeline_lock = threading.Lock()
+
+
 def _run_pipeline():
-    """The nightly APScheduler job. Runs the SAME sequence as the CLI scheduler
-    (market, political, validate) in-process — not run.py alone (#48). A failing
-    step must never raise out of here, or APScheduler drops the job."""
+    """The nightly APScheduler job (also the bootstrap thread's target). Runs the
+    SAME sequence as the CLI scheduler (market, political, validate) in-process —
+    not run.py alone (#48). Holds _pipeline_lock so a cron fire and a bootstrap
+    never run at once. A failing step must never raise out of here, or APScheduler
+    drops the job."""
     import scheduler
-    try:
-        ok, results = scheduler.run_all()
-        print(f"nightly pipeline finished ok={ok} steps={results}", flush=True)
-    except Exception as e:
-        print(f"nightly pipeline crashed: {e}", flush=True)
+    with _pipeline_lock:
+        try:
+            ok, results = scheduler.run_all()
+            print(f"nightly pipeline finished ok={ok} steps={results}", flush=True)
+        except Exception as e:
+            print(f"nightly pipeline crashed: {e}", flush=True)
+
+
+def _maybe_bootstrap():
+    """Cold-volume bootstrap: a fresh /data volume serves nothing until the first
+    02:00 run. If there's no fundamentals.json yet, kick one run now in a background
+    thread so the API has data to serve within the hour. BOOTSTRAP_ON_EMPTY=0 turns
+    it off. The thread target is _run_pipeline, so it holds _pipeline_lock and can
+    never overlap the cron job. Returns the started thread, or None."""
+    if os.environ.get("BOOTSTRAP_ON_EMPTY") == "0":
+        return None
+    if os.path.exists(os.path.join(DATA_DIR, "fundamentals.json")):
+        return None
+    print("bootstrap: no fundamentals.json on the volume — starting one "
+          "pipeline run in the background", flush=True)
+    t = threading.Thread(target=_run_pipeline, name="bootstrap", daemon=True)
+    t.start()
+    app.state.bootstrap_thread = t
+    return t
 
 
 @app.on_event("startup")
@@ -65,6 +92,8 @@ def _start_scheduler():
                   id="nightly_pipeline", max_instances=1, coalesce=True)
     sched.start()
     app.state.scheduler = sched
+
+    _maybe_bootstrap()
 
 # Read-only data API → browser web clients need CORS. Allow all origins for now
 # (data is non-sensitive market data); tighten to the app domains before any
@@ -201,7 +230,20 @@ def health():
                 last_run = json.load(f)
         except Exception:
             last_run = None
-    return {"ok": True, "outputs": have, "last_run": last_run}
+    # Config report — BOOLEANS ONLY, never the secret values. A silent-degrade
+    # catcher: SEC_USER_AGENT unset → yfinance fallback (no as-filed XBRL);
+    # FRED_API_KEY unset → /api/macro 503. data_dir is a path, not a secret.
+    return {
+        "ok": True,
+        "outputs": have,
+        "last_run": last_run,
+        "data_dir": DATA_DIR,
+        "config": {
+            "sec_user_agent": bool(os.environ.get("SEC_USER_AGENT", "").strip()),
+            "fred_api_key":   bool(os.environ.get("FRED_API_KEY", "").strip()),
+            "run_scheduler":  os.environ.get("RUN_SCHEDULER") == "1",
+        },
+    }
 
 
 # ── Stocks screener ───────────────────────────────────────────────────────────
