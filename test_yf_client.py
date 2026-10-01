@@ -77,3 +77,28 @@ def test_run_batches_whole_batch_failure_uses_shared_backoff(monkeypatch, tmp_pa
 if __name__ == "__main__":
     import subprocess, sys
     sys.exit(subprocess.call([sys.executable, "-m", "pytest", "-q", __file__]))
+
+
+def test_stage_pacing_comes_from_config_not_per_script_constants(monkeypatch):
+    # #11: "Pacing knobs come from config.py; no per-script duplicate defaults."
+    # fundamentals/model used to hardcode BATCH_SIZE/SLEEP_SEC/MAX_RETRIES, so
+    # YF_BATCH etc. were silently ignored by the two heaviest stages.
+    import importlib, re
+    from pathlib import Path
+    for script in ("fundamentals.py", "model.py"):
+        src = Path(__file__).with_name(script).read_text(encoding="utf-8")
+        for knob in ("BATCH_SIZE", "SLEEP_SEC", "MAX_RETRIES"):
+            m = re.search(rf"^{knob}\s*=\s*(.+)$", src, re.M)
+            assert m and m.group(1).strip().startswith("config."), f"{script}: {knob} = {m.group(1) if m else None}"
+
+    monkeypatch.setenv("YF_BATCH", "7")
+    monkeypatch.setenv("YF_BATCH_FUNDAMENTALS", "5")
+    monkeypatch.setenv("YF_RETRIES", "4")
+    cfg = importlib.reload(config)
+    try:
+        assert (cfg.YF_BATCH, cfg.YF_BATCH_FUNDAMENTALS, cfg.YF_RETRIES) == (7, 5, 4)
+    finally:
+        monkeypatch.undo()
+        importlib.reload(config)
+    assert config.YF_BATCH_FUNDAMENTALS == 20 and config.YF_SLEEP_FUNDAMENTALS == 3.0, \
+        "fundamentals keeps its slower default batch/sleep when nothing is set"
