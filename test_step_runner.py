@@ -154,7 +154,7 @@ def test_scheduler_runs_both_in_order(monkeypatch):
     scheduler, calls = _stub_scheduler(monkeypatch, {})
     scheduler.run()
     assert [c.replace("\\", "/").rsplit("/", 1)[-1] for c in calls] == \
-           ["run.py", "pol_refresh.py"]
+           ["run.py", "pol_refresh.py", "validate.py"]
 
 
 def test_scheduler_exits_1_when_market_fails(monkeypatch):
@@ -176,3 +176,23 @@ def test_scheduler_exits_1_when_political_fails(monkeypatch):
 if __name__ == "__main__":
     import subprocess, sys
     sys.exit(subprocess.call([sys.executable, "-m", "pytest", "-q", __file__]))
+
+
+def test_scheduler_skips_run_py_validate_and_gates_strictly(monkeypatch):
+    # validate runs LAST, after both pipelines, so it checks tonight's political
+    # data; run.py's own validate stage is skipped under the scheduler.
+    import scheduler
+    argvs = []
+    monkeypatch.setattr(scheduler.subprocess, "run",
+                        lambda args, **kw: argvs.append(args) or types.SimpleNamespace(returncode=0))
+    scheduler.run()
+    by = {a[1].replace("\\", "/").rsplit("/", 1)[-1]: list(a[2:]) for a in argvs}
+    assert by["run.py"] == ["--skip-validate"]
+    assert by["validate.py"] == ["--strict"]
+
+
+def test_scheduler_exits_1_when_validate_fails(monkeypatch):
+    scheduler, calls = _stub_scheduler(monkeypatch, {"validate.py": 1})
+    with pytest.raises(SystemExit) as exc:
+        scheduler.run()
+    assert exc.value.code == 1

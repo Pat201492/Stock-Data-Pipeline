@@ -29,14 +29,18 @@ import config
 
 LOGICAL = "ticker, transaction_date, insider_name, transaction_type, shares"
 
-# One entry per finding. Default allowance is 0; each is overridable by env
-# VALIDATE_MAX_<NAME> (uppercased finding name).
+# One entry per finding: the allowed count before --strict fails, or None for
+# REPORT-ONLY (printed, never gating -- the module docstring's contract for
+# unknown-bioguide trades and fundamental outliers). Gating fundamentals at 0
+# failed on legitimate data: negative equity is normal for buyback-heavy filers
+# (MCD on 2026-10-01). Env VALIDATE_MAX_<NAME> sets a numeric allowance, which
+# also opts a report-only finding into gating.
 THRESHOLDS = {
     "insider_duplicates":      0,
     "orphan_memberships":      0,
     "stale_dashed_committees": 0,
-    "unknown_bioguide_trades": 0,
-    "fundamental_outliers":    0,
+    "unknown_bioguide_trades": None,
+    "fundamental_outliers":    None,
 }
 
 
@@ -46,6 +50,10 @@ def threshold(name):
     if env is not None and env != "":
         return int(env)
     return THRESHOLDS[name]
+
+
+def _tables(con):
+    return {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
 
 
 def _has_cols(con, table, cols):
@@ -59,34 +67,44 @@ def report(fix=False):
     `findings` maps each THRESHOLDS name to an integer count. `fund_detail`
     breaks fundamental_outliers down by rule for the printed report.
     """
-    pol = sqlite3.connect(config.POL_DB_PATH)
+    # A check whose tables do not exist yet is SKIPPED (None), not a crash. On a
+    # fresh volume the market pipeline runs (and used to validate) before the
+    # political refresh has ever created its tables, so the first nightly run
+    # died on "no such table" -- a database that is empty is not a database
+    # that is wrong. Read-only so validating never creates politicians.db.
     findings = {}
+    pol = None
+    if os.path.exists(config.POL_DB_PATH):
+        pol = sqlite3.connect(f"file:{config.POL_DB_PATH}?mode=ro", uri=True) if not fix             else sqlite3.connect(config.POL_DB_PATH)
+    have = _tables(pol) if pol else set()
+
+    def _count(name, needs, sql):
+        findings[name] = pol.execute(sql).fetchone()[0] if needs <= have else None
 
     # 1) insider duplicates (logical key)
-    tot = pol.execute("SELECT COUNT(*) FROM insider_trades").fetchone()[0]
-    distinct = pol.execute(
-        f"SELECT COUNT(*) FROM (SELECT 1 FROM insider_trades GROUP BY {LOGICAL})"
-    ).fetchone()[0]
-    findings["insider_duplicates"] = tot - distinct
+    _count("insider_duplicates", {"insider_trades"}, f"""
+        SELECT (SELECT COUNT(*) FROM insider_trades)
+             - (SELECT COUNT(*) FROM (SELECT 1 FROM insider_trades GROUP BY {LOGICAL}))
+    """)
 
     # 2) orphan committee memberships
-    findings["orphan_memberships"] = pol.execute("""
+    _count("orphan_memberships", {"committee_memberships", "committees"}, """
         SELECT COUNT(*) FROM committee_memberships m
         WHERE NOT EXISTS (SELECT 1 FROM committees c WHERE c.committee_id = m.committee_id)
-    """).fetchone()[0]
+    """)
 
     # 3) stale dashed subcommittee rows (old id scheme, no members)
-    findings["stale_dashed_committees"] = pol.execute("""
+    _count("stale_dashed_committees", {"committees", "committee_memberships"}, """
         SELECT COUNT(*) FROM committees c
         WHERE c.committee_id LIKE '%-%'
           AND NOT EXISTS (SELECT 1 FROM committee_memberships m WHERE m.committee_id = c.committee_id)
-    """).fetchone()[0]
+    """)
 
     # 4) congressional trades with unknown bioguide (report only)
-    findings["unknown_bioguide_trades"] = pol.execute("""
+    _count("unknown_bioguide_trades", {"congressional_trades", "politicians"}, """
         SELECT COUNT(*) FROM congressional_trades t
         WHERE NOT EXISTS (SELECT 1 FROM politicians p WHERE p.bioguide_id = t.bioguide_id)
-    """).fetchone()[0]
+    """)
 
     # 5) extreme/invalid fundamentals (report only, stocks.db)
     fund = {}
@@ -107,7 +125,7 @@ def report(fix=False):
     findings["fundamental_outliers"] = sum(v for v in fund.values() if isinstance(v, int))
 
     fixed = {}
-    if fix:
+    if fix and pol is not None and {"insider_trades", "committees", "committee_memberships"} <= have:
         # dedupe insider — keep non-mirror (EDGAR) row per logical key
         cur = pol.execute(f"""
             DELETE FROM insider_trades WHERE rowid NOT IN (
@@ -134,13 +152,15 @@ def report(fix=False):
         fixed["stale_dashed_committees_removed"] = cur.rowcount
         pol.commit()
 
-    pol.close()
+    if pol is not None:
+        pol.close()
     return findings, fund, fixed
 
 
 def breaches(findings):
     """Findings whose count exceeds its (env-overridable) threshold."""
-    return {k: (v, threshold(k)) for k, v in findings.items() if v > threshold(k)}
+    return {k: (v, threshold(k)) for k, v in findings.items()
+            if v is not None and threshold(k) is not None and v > threshold(k)}
 
 
 def main(argv=None):
@@ -156,7 +176,8 @@ def main(argv=None):
         extra = ""
         if k == "fundamental_outliers" and fund:
             extra = "  " + ", ".join(f"{fk}={fv}" for fk, fv in fund.items())
-        print(f"  {k:28} {v}{extra}")
+        tag = "" if v is None or threshold(k) is not None else "  (report-only)"
+        print(f"  {k:28} {'skipped (table not created yet)' if v is None else v}{tag}{extra}")
     if fixed:
         print("-" * 52)
         for k, v in fixed.items():

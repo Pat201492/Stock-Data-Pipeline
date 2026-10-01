@@ -128,7 +128,6 @@ def test_each_finding_can_fail_strict(dbs):
     for kwargs, name in [
         (dict(orphans=1),      "orphan_memberships"),
         (dict(stale=1),        "stale_dashed_committees"),
-        (dict(unknown_bio=1),  "unknown_bioguide_trades"),
     ]:
         pol.unlink(missing_ok=True)
         _seed_pol(str(pol), **kwargs)
@@ -219,3 +218,66 @@ def test_run_from_still_ends_with_validate(monkeypatch):
 if __name__ == "__main__":
     import subprocess, sys
     sys.exit(subprocess.call([sys.executable, "-m", "pytest", "-q", __file__]))
+
+
+# ── report-only findings: printed, never gating unless opted in ───────────────
+
+def test_report_only_findings_do_not_fail_strict_by_default(dbs, capsys):
+    # Gating these at 0 failed on legitimate data: MCD's negative equity
+    # (buybacks) tripped fundamental_outliers on the 2026-10-01 run.
+    pol, stk = dbs
+    _seed_pol(str(pol), unknown_bio=3)
+    _seed_stk(str(stk), outliers=4)
+    assert validate.main(["--strict"]) == 0
+    out = capsys.readouterr().out
+    assert "unknown_bioguide_trades" in out and "(report-only)" in out
+
+
+def test_report_only_finding_gates_when_opted_in(dbs, monkeypatch):
+    pol, stk = dbs
+    _seed_pol(str(pol), unknown_bio=1)
+    _seed_stk(str(stk))
+    monkeypatch.setenv("VALIDATE_MAX_UNKNOWN_BIOGUIDE_TRADES", "0")
+    assert validate.main(["--strict"]) == 1
+
+
+# ── fresh volume: political tables not created yet ───────────────────────────
+
+def test_missing_political_db_is_skipped_not_a_crash(dbs, capsys):
+    # First nightly run on a fresh volume: stocks.db exists, the political
+    # refresh has never run. That crashed with "no such table: insider_trades".
+    pol, stk = dbs
+    _seed_stk(str(stk))
+    assert validate.main(["--strict"]) == 0
+    out = capsys.readouterr().out
+    assert "skipped (table not created yet)" in out
+    assert not pol.exists(), "validating must never create politicians.db"
+
+
+def test_empty_political_db_without_tables_is_skipped(dbs, capsys):
+    pol, stk = dbs
+    sqlite3.connect(str(pol)).close()   # file exists, no tables
+    _seed_stk(str(stk))
+    assert validate.main(["--strict"]) == 0
+    assert "skipped (table not created yet)" in capsys.readouterr().out
+
+
+def test_present_tables_still_gate_when_others_missing(dbs):
+    pol, stk = dbs
+    con = sqlite3.connect(str(pol))
+    con.execute("CREATE TABLE insider_trades (filing_id TEXT PRIMARY KEY, ticker TEXT, "
+                "transaction_date TEXT, insider_name TEXT, transaction_type TEXT, "
+                "shares INTEGER, source_url TEXT)")
+    for i in range(2):
+        con.execute("INSERT INTO insider_trades VALUES (?, 'AAPL', '2024-01-01', 'X', 'P', 1, ?)",
+                    (f"f{i}", "edgar" if i == 0 else "mirror:1"))
+    con.commit(); con.close()
+    _seed_stk(str(stk))
+    assert validate.main(["--strict"]) == 1
+
+
+def test_fix_on_missing_tables_is_a_noop(dbs):
+    pol, stk = dbs
+    _seed_stk(str(stk))
+    assert validate.main(["--fix"]) == 0
+    assert not pol.exists()
