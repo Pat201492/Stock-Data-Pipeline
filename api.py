@@ -18,6 +18,7 @@ from datetime import datetime
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 import config
 from database import SessionLocal, News, PriceHistory, ETF, ETFHolding
@@ -289,6 +290,50 @@ def commodity(root: str):
                 pass
             return r
     raise HTTPException(404, f"{root} not found")
+
+
+# ── Macro regime (FRED) ───────────────────────────────────────────────────────
+@app.get("/api/macro")
+def macro():
+    """VIX term structure + 10y-3m spread for the dashboard's macro-regime soft
+    gates (Trader-Screener #39). Shape matches its pipeline-mock contract:
+    {vix, vixcls, vix9d, vix3m, t10y3m, t10y3m_monthly, asof}.
+
+    Each series is fetched independently via fred.latest_with_change (so the
+    existing cache + 429 retry apply); a series that fails or is missing is null
+    on its own and does not fail the whole response. vix9d has no FRED source, so
+    it is always null. 503 when FRED_API_KEY is unset."""
+    import fred
+    if not fred.configured():
+        return JSONResponse(status_code=503, content={"error": "FRED_API_KEY not set"})
+
+    dates = []
+
+    def latest(series_id):
+        try:
+            r = fred.latest_with_change(series_id)
+        except Exception:
+            return None   # per-series failure stays null, response still 200
+        if not r:
+            return None
+        if r.get("asof"):
+            dates.append(r["asof"])
+        return r["value"]
+
+    vixcls = latest("VIXCLS")
+    vix3m  = latest("VXVCLS")
+    t10y3m = latest("T10Y3M")
+    t10y3m_monthly = latest("T10Y3MM")
+
+    return {
+        "vix":            vixcls,
+        "vixcls":         vixcls,
+        "vix9d":          None,   # no FRED source
+        "vix3m":          vix3m,
+        "t10y3m":         t10y3m,
+        "t10y3m_monthly": t10y3m_monthly,
+        "asof":           max(dates) if dates else None,
+    }
 
 
 # ── Options ───────────────────────────────────────────────────────────────────
