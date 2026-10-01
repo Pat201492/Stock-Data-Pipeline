@@ -1,7 +1,7 @@
 """
 run.py — Pipeline runner
 =========================
-Runs scripts in order with timing and logging.
+Runs scripts in order with timing and logging, via the shared step_runner.
 All scripts are incremental — only stale data is re-fetched.
 
 Usage:
@@ -18,46 +18,25 @@ failing validate makes the whole run exit 1 (issue #34).
 Log: run.log under DATA_DIR (config.RUN_LOG, appended each run)
 """
 
-import argparse, subprocess, sys, os, time
-from datetime import datetime
+import argparse, sys, time
 
 import config
+from step_runner import Step, run_steps, default_log as log, DIV
 
-LOG_FILE = config.RUN_LOG  # under DATA_DIR so the log survives on the Fly volume
-SCRIPTS  = ["universe.py", "fundamentals.py", "model.py", "news.py",
-            "etf_universe.py", "commodities.py", "options.py",
-            "commodity_exposure.py"]
-DIV      = "=" * 58
+SCRIPTS  = ["universe", "fundamentals", "model", "news",
+            "etf_universe", "commodities", "options", "commodity_exposure"]
 
 
-def log(msg):
-    ts   = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    line = f"[{ts}] {msg}"
-    print(line)
-    with open(LOG_FILE, "a", encoding="utf-8") as f: f.write(line + "\n")
-
-
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-
-def run_script(script, args=None):
-    path = os.path.join(SCRIPT_DIR, script)
-    if not os.path.exists(path):
-        log(f"❌ {script} not found at {path}"); return False
-
-    label = script + (" " + " ".join(args) if args else "")
-    log(f"▶  Starting {label} …")
-    start = time.time()
-    try:
-        # cwd=SCRIPT_DIR ensures scripts save Excel/JSON to the Stock Tracker
-        # folder regardless of where the terminal was when run.py was launched.
-        result  = subprocess.run([sys.executable, path, *(args or [])], cwd=SCRIPT_DIR)
-        elapsed = round(time.time() - start, 1)
-        if result.returncode == 0:
-            log(f"✅ {label} completed in {elapsed}s"); return True
-        else:
-            log(f"❌ {label} exited code {result.returncode} after {elapsed}s"); return False
-    except Exception as e:
-        log(f"❌ {label} crashed: {e}"); return False
+def build_steps(skip_universe=False, skip_validate=False):
+    """Build the ordered Step list; validate.py --strict is always last."""
+    steps = [
+        Step(name=s, kind="subprocess", script=f"{s}.py",
+             enabled=not (skip_universe and s == "universe"))
+        for s in SCRIPTS
+    ]
+    steps.append(Step(name="validate", kind="subprocess", script="validate.py",
+                      args=["--strict"], enabled=not skip_validate))
+    return steps
 
 
 def parse_args():
@@ -65,56 +44,34 @@ def parse_args():
     p.add_argument("--skip-universe",  action="store_true")
     p.add_argument("--skip-validate",  action="store_true")
     p.add_argument("--from", dest="from_script", metavar="SCRIPT",
-                   choices=["universe", "fundamentals", "model", "news",
-                            "etf_universe", "commodities", "options",
-                            "commodity_exposure"])
+                   choices=SCRIPTS)
     return p.parse_args()
 
 
 def main():
-    args    = parse_args()
-    scripts = list(SCRIPTS)
-
-    if   args.skip_universe: scripts = [s for s in scripts if s != "universe.py"]
-    elif args.from_script:
-        idx     = [s.replace(".py", "") for s in scripts].index(args.from_script)
-        scripts = scripts[idx:]
+    args  = parse_args()
+    steps = build_steps(skip_universe=args.skip_universe,
+                        skip_validate=args.skip_validate)
 
     log(DIV)
-    log(f"  Stock Tracker — Pipeline Run")
-    log(f"  Scripts: {', '.join(scripts)}")
+    log("  Stock Tracker — Pipeline Run")
+    log(f"  Scripts: {', '.join(s.name for s in steps if s.enabled)}")
     log(DIV)
 
     with config.yfinance_lock():
-        t0      = time.time()
-        results = {}
-
-        for script in scripts:
-            log(DIV)
-            ok              = run_script(script)
-            results[script] = ok
-            if not ok: log(f"⚠️  {script} failed — continuing")
-            log("")
-
-        # Final integrity gate: validate.py --strict is the last stage. A failing
-        # validate fails the whole run (issue #34). --skip-validate opts out.
-        if not args.skip_validate:
-            log(DIV)
-            ok = run_script("validate.py", ["--strict"])
-            results["validate.py"] = ok
-            if not ok: log("⚠️  validate.py failed — run will exit 1")
-            log("")
+        t0 = time.time()
+        ok, results = run_steps(steps, from_step=args.from_script, log=log)
 
         log(DIV)
         log(f"  Complete — {round(time.time() - t0, 1)}s total")
         log(DIV)
-        for script, ok in results.items():
-            log(f"  {script:<22}  {'✅ OK' if ok else '❌ FAILED'}")
+        for name, step_ok in results.items():
+            log(f"  {name:<22}  {'✅ OK' if step_ok else '❌ FAILED'}")
         log(DIV)
 
-        failed = [s for s, ok in results.items() if not ok]
+        failed = [s for s, step_ok in results.items() if not step_ok]
         if failed:
-            log(f"\n⚠️  {len(failed)} script(s) failed. Check run.log.")
+            log(f"\n⚠️  {len(failed)} step(s) failed. Check run.log.")
             sys.exit(1)
         else:
             log("\n🎉 All scripts completed successfully.")
