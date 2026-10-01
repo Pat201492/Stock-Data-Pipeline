@@ -40,7 +40,7 @@ def test_is_rate_limited_recognises_429():
 # ── shared backoff, commodities path: the yf_download wrapper ────────────────────
 def test_download_rate_limit_uses_shared_backoff(monkeypatch):
     calls = {"n": 0}
-    monkeypatch.setattr(yf_client, "backoff", lambda context="": calls.__setitem__("n", calls["n"] + 1))
+    monkeypatch.setattr(yf_client, "backoff", lambda context="", attempt=0: calls.__setitem__("n", calls["n"] + 1))
     monkeypatch.setattr(yf_client, "pace", lambda: None)
     monkeypatch.setattr(config, "YF_RETRIES", 2)
 
