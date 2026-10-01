@@ -1,11 +1,12 @@
 """
 news.py — Fetch news and sentiment for stocks in the database
 """
-import time, warnings
+import math, time, warnings
 from datetime import datetime
 warnings.filterwarnings("ignore")
 
-from yf_client import yf_ticker
+from yf_client import yf_ticker, is_empty, EmptyUpstreamResponse, tolerate_empties
+from data_utils import sf
 from database import SessionLocal, News, Stock, PriceHistory, init_db
 
 try:
@@ -89,17 +90,26 @@ def fetch_and_store_news(ticker, db, limit=10):
 
 
 def fetch_and_store_prices(ticker, db, period="1y"):
+    """Fetch price history and store, raising EmptyUpstreamResponse if empty."""
     try:
         t    = yf_ticker(ticker)
         hist = t.history(period=period)
         if hist.empty:
-            return 0
+            raise EmptyUpstreamResponse(f"empty price history for {ticker}", symbol=ticker, label="history")
+    except EmptyUpstreamResponse:
+        raise
     except Exception:
-        return 0
+        raise EmptyUpstreamResponse(f"price history fetch failed for {ticker}", symbol=ticker, label="history")
 
     saved = 0
     for date, row in hist.iterrows():
         date_str = date.strftime("%Y-%m-%d")
+        # Guard against NaN values (issue #39): reject NaN close prices
+        close_val = sf(row.get("Close"))
+        if close_val is None:
+            continue
+        vol_val = sf(row.get("Volume", 0)) or 0.0
+
         existing = (
             db.query(PriceHistory)
             .filter(PriceHistory.ticker == ticker, PriceHistory.date == date_str)
@@ -110,8 +120,8 @@ def fetch_and_store_prices(ticker, db, period="1y"):
         db.add(PriceHistory(
             ticker=ticker,
             date=date_str,
-            close=round(float(row["Close"]), 4),
-            volume=float(row.get("Volume", 0)),
+            close=round(close_val, 4),
+            volume=vol_val,
         ))
         saved += 1
 
@@ -168,16 +178,23 @@ def main(tickers=None, limit_per_ticker=10):
 
     all_need = sorted(set(need_news) | set(need_prices), key=lambda t: tickers.index(t) if t in tickers else 9999)
 
+    price_empty = 0
     for i, ticker in enumerate(all_need):
         if i % 50 == 0:
             print(f"  {i}/{len(all_need)}")
         if ticker in need_news:
             fetch_and_store_news(ticker, db, limit=limit_per_ticker)
         if ticker in need_prices:
-            fetch_and_store_prices(ticker, db)
+            try:
+                fetch_and_store_prices(ticker, db)
+            except EmptyUpstreamResponse:
+                price_empty += 1
         time.sleep(0.3)
 
     db.close()
+    # Report empty-response rate for price fetches (issue #39)
+    if need_prices:
+        tolerate_empties("news:prices", len(need_prices), price_empty, max_empty_rate=0.25)
     print(f"Done — updated {len(all_need)} tickers.")
 
 
