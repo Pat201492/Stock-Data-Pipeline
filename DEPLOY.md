@@ -9,7 +9,7 @@ to exactly one machine — so the API and the cron must live together to share
    ┌──────────────────────────────────────────┐
    │  Fly machine (always-on, min=1)           │
    │   ├─ uvicorn api:app   → serves /api/...   │
-   │   └─ APScheduler 02:00 UTC → run.py        │
+   │   └─ APScheduler 02:00 UTC → full night    │
    │            writes ↓        ↑ reads         │
    │        ┌─────────────────────────┐         │
    │        │  /data volume (*.json,  │         │
@@ -21,20 +21,37 @@ to exactly one machine — so the API and the cron must live together to share
 Still one collector — no second box. The machine stays up (shared-cpu-1x is
 cheap) because the in-process scheduler needs to be alive at 02:00 UTC.
 
+The 02:00 job runs the **full nightly sequence** — `run.py --skip-validate`, then
+`pol_refresh.py`, then `validate.py --strict` (`scheduler.run_all`, #48) — not
+`run.py` alone. On startup, if the volume has **no `fundamentals.json` yet**, the
+API kicks one such run in the background so a fresh deploy serves data within the
+hour instead of waiting for 02:00 (the cold-volume *bootstrap*, #49). Set
+`BOOTSTRAP_ON_EMPTY=0` to disable it. The bootstrap and the cron share one lock,
+so they never run at once.
+
 ## First-time setup
 ```bash
 fly launch --no-deploy --copy-config        # uses fly.toml; app = stock-data-pipeline-pat
 fly volumes create pipeline_data --size 2 --region ewr
 
-# Secrets (never commit):
-fly secrets set FRED_API_KEY=xxxxx
+# Secrets (never commit). Both degrade SILENTLY if unset — set them before deploy:
+fly secrets set FRED_API_KEY=xxxxx                 # /api/macro is 503 without it
+fly secrets set SEC_USER_AGENT="YourApp you@example.com"  # no as-filed XBRL Magic
+                                                   # Formula without it (yfinance fallback)
 # Google service-account JSON for sheets.py (if used):
 #   fly secrets set GOOGLE_SA_JSON="$(cat stock-stracker-*.json)"  # sheets.py reads it from env
 
 fly deploy
 fly status
-curl https://stock-data-pipeline-pat.fly.dev/health
+
+# Verify the deploy in one command (checks /health config, /api/stocks, macro,
+# integrity; exits non-zero on any failure). --allow-empty while the bootstrap runs:
+python smoke_deploy.py https://stock-data-pipeline-pat.fly.dev
 ```
+
+`/health` reports `config: {sec_user_agent, fred_api_key, run_scheduler}` as
+booleans (never the values) plus `data_dir`, so you can confirm both secrets
+landed without exposing them. `smoke_deploy.py` fails loudly if either is false.
 
 `RUN_SCHEDULER=1` (set in fly.toml) turns on the in-process nightly run. To run
 the API without the cron (e.g. a read replica), deploy a second app config with
@@ -65,18 +82,22 @@ to the container FS.
 Env vars honored (all defined in `config.py`):
 - `DATA_DIR` — writable root for outputs/caches/DBs/`run.log`.
 - `DB_PATH`, `POL_DB_PATH` — SQLite paths (default under `DATA_DIR`).
-- `FRED_API_KEY` — macro series (`fred.py`).
+- `FRED_API_KEY` — macro series (`fred.py`); `/api/macro` is 503 without it.
+- `SEC_USER_AGENT` — enables as-filed XBRL Magic Formula (`fundamentals.py`);
+  falls back to yfinance when unset.
 - `YF_SLEEP`, `YF_BATCH`, `YF_RETRIES`, `YF_BACKOFF` — yfinance pacing (one set
   of canonical defaults, applied to universe enrich and `run_batches` alike).
 - `OPTIONS_TOP_N`, `OPTIONS_MAX_EXP` — options scope (`options.py`).
 - `EXPOSURE_COMPUTE` — enable computed exposure betas (`commodity_exposure.py`).
-- `RUN_SCHEDULER` — in-process nightly cron (`api.py`).
+- `RUN_SCHEDULER` — in-process nightly cron + cold-volume bootstrap (`api.py`).
+- `BOOTSTRAP_ON_EMPTY` — set to `0` to disable the cold-volume bootstrap (`api.py`).
 
 `news.py` is DB-only (`DB_PATH`).
 
 ## ⚠️ Remaining before go-live
-- [ ] Set real secrets (`FRED_API_KEY`, Google SA) in `fly secrets`.
-- [ ] First deploy + first `run.py` (cold volume → API returns 503/empty until
-      the first nightly completes; trigger once manually if needed).
+- [ ] Set real secrets (`FRED_API_KEY`, `SEC_USER_AGENT`, Google SA) in `fly secrets`.
+- [ ] First deploy — the cold-volume bootstrap (#49) starts one run automatically;
+      API returns empty until it finishes (use `smoke_deploy.py --allow-empty` meanwhile).
+- [ ] Run `python smoke_deploy.py https://stock-data-pipeline-pat.fly.dev` — all PASS.
 - [ ] Confirm the OLD app's cron is OFF after cutover (no double-collect).
 - [ ] (Optional) JSON-on-volume vs DB-backed API reads — see FOLLOWUPS.md.
