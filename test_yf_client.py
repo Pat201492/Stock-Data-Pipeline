@@ -40,7 +40,7 @@ def test_is_rate_limited_recognises_429():
 # ── shared backoff, commodities path: the yf_download wrapper ────────────────────
 def test_download_rate_limit_uses_shared_backoff(monkeypatch):
     calls = {"n": 0}
-    monkeypatch.setattr(yf_client, "backoff", lambda context="": calls.__setitem__("n", calls["n"] + 1))
+    monkeypatch.setattr(yf_client, "backoff", lambda context="", attempt=0: calls.__setitem__("n", calls["n"] + 1))
     monkeypatch.setattr(yf_client, "pace", lambda: None)
     monkeypatch.setattr(config, "YF_RETRIES", 2)
 
@@ -72,6 +72,96 @@ def test_run_batches_whole_batch_failure_uses_shared_backoff(monkeypatch, tmp_pa
 
     data_utils.run_batches(["AAA", "BBB"], fetch_all_fail, {}, str(tmp_path / "c.json"))
     assert calls["n"] >= 1, "a fully-failed batch must trip the shared backoff"
+
+
+# ── empty-upstream signal + caller tolerance + reporting (issue #38) ─────────────
+import pytest
+
+
+class _FakeTicker:
+    """Stand-in for yf.Ticker: returns a canned ``.info`` payload. No network."""
+    def __init__(self, symbol, payload):
+        self.symbol = symbol
+        self.info = payload
+
+
+class _FakeDF:
+    """Minimal pandas-DataFrame stand-in: only the ``.empty`` attribute matters."""
+    def __init__(self, empty):
+        self.empty = empty
+
+
+def test_is_empty_recognises_empty_shapes():
+    assert yf_client.is_empty(None)
+    assert yf_client.is_empty({})
+    assert yf_client.is_empty([])
+    assert yf_client.is_empty("")
+    assert yf_client.is_empty(_FakeDF(empty=True))
+    # Real answers (including falsy scalars) are NOT empty
+    assert not yf_client.is_empty({"symbol": "AAPL"})
+    assert not yf_client.is_empty([{"title": "x"}])
+    assert not yf_client.is_empty(_FakeDF(empty=False))
+    assert not yf_client.is_empty(0)
+    assert not yf_client.is_empty(False)
+
+
+def test_info_empty_dict_raises_not_returns(monkeypatch):
+    # Simulated throttle: stub yfinance .info -> {}. The core fetch path must
+    # RAISE (the step fails), never hand back {} as if it were success.
+    monkeypatch.setattr(yf_client, "pace", lambda: None)
+    monkeypatch.setattr(yf_client.yf, "Ticker", lambda s: _FakeTicker(s, {}))
+    with pytest.raises(yf_client.EmptyUpstreamResponse):
+        yf_client.yf_info_with_retry("THROTTLED")
+
+
+def test_info_empty_dataframe_raises(monkeypatch):
+    monkeypatch.setattr(yf_client, "pace", lambda: None)
+    monkeypatch.setattr(yf_client.yf, "Ticker",
+                        lambda s: _FakeTicker(s, _FakeDF(empty=True)))
+    with pytest.raises(yf_client.EmptyUpstreamResponse):
+        yf_client.yf_info_with_retry("THROTTLED")
+
+
+def test_info_real_payload_returns(monkeypatch):
+    monkeypatch.setattr(yf_client, "pace", lambda: None)
+    monkeypatch.setattr(yf_client.yf, "Ticker",
+                        lambda s: _FakeTicker(s, {"symbol": "AAPL", "shortRatio": 1.2}))
+    info = yf_client.yf_info_with_retry("AAPL")
+    assert info["symbol"] == "AAPL"
+
+
+def test_tolerate_empties_mostly_empty_fails(monkeypatch, tmp_path):
+    # Source down/throttled: most of the batch came back empty -> step FAILS.
+    monkeypatch.setattr(config, "DATA_DIR", str(tmp_path))
+    yf_client.reset_empty_rates()
+    with pytest.raises(yf_client.EmptyUpstreamResponse):
+        yf_client.tolerate_empties("info", total=1000, empty=900, max_empty_rate=0.2)
+    # even on failure the rate is recorded for a human to read
+    rep = yf_client.empty_rate_report()["info"]
+    assert rep["rate"] == 0.9 and rep["ok"] is False
+
+
+def test_tolerate_empties_genuinely_empty_but_valid_succeeds(monkeypatch, tmp_path):
+    # A handful of delisted names / symbols with no news among thousands is normal
+    # — the step succeeds and the rate is still reported.
+    monkeypatch.setattr(config, "DATA_DIR", str(tmp_path))
+    yf_client.reset_empty_rates()
+    rate = yf_client.tolerate_empties("info", total=1000, empty=3, max_empty_rate=0.2)
+    assert rate == 0.003
+    rep = yf_client.empty_rate_report()["info"]
+    assert rep["ok"] is True
+
+
+def test_empty_rate_report_persisted_to_file(monkeypatch, tmp_path):
+    # Empty-response rate is written somewhere a human / Stock-App #109 can read.
+    monkeypatch.setattr(config, "DATA_DIR", str(tmp_path))
+    yf_client.reset_empty_rates()
+    yf_client.tolerate_empties("news", total=500, empty=10, max_empty_rate=0.5)
+    import json as _json
+    path = tmp_path / "empty_rates.json"
+    assert path.exists()
+    saved = _json.loads(path.read_text(encoding="utf-8"))
+    assert saved["news"]["total"] == 500 and saved["news"]["empty"] == 10
 
 
 if __name__ == "__main__":
