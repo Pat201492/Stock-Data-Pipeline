@@ -171,6 +171,10 @@ def integrity():
             "expected": len(expected),
             "missing": missing,
         },
+        # Per-step upstream empty-response rates (issue #38). Written by the
+        # yfinance fetch layer; lets a human / Stock-App #109 see when a step
+        # came back mostly empty (source throttled/down) rather than clean.
+        "empty_rates": _load("empty_rates.json") or {},
     }
 
 

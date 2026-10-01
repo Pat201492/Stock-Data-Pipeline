@@ -28,7 +28,10 @@ import urllib.request, urllib.parse, urllib.error
 from datetime import datetime, timedelta
 warnings.filterwarnings("ignore")
 
-from yf_client import yf_ticker
+from yf_client import (
+    yf_ticker, yf_info_with_retry, is_empty, tolerate_empties,
+    EmptyUpstreamResponse,
+)
 import numpy as np
 
 from openpyxl import Workbook
@@ -307,9 +310,18 @@ def fetch_deep(ticker):
     yft    = yf_ticker(ticker)
     record = extract_fundamentals(ticker, yft)
 
+    # yft.info is the live profile fetch. yf_info_with_retry raises
+    # EmptyUpstreamResponse on an empty payload (a throttled/degraded response
+    # must not masquerade as a legitimately empty one, issue #38). A single empty
+    # here is non-fatal — the record keeps its XBRL/statement fields — but it is
+    # flagged so the batch caller can judge the aggregate empty rate.
     info = {}
-    try: info = yft.info or {}
-    except Exception: pass
+    try:
+        info = yf_info_with_retry(ticker, label="deepdive_info")
+    except EmptyUpstreamResponse:
+        record["info_empty"] = True
+    except Exception as e:
+        print(f"    ⚠️  info fetch failed for {ticker}: {e}")
 
     # Extra fields
     try:
@@ -953,6 +965,7 @@ def main():
 
     # Fetch / use cache
     stocks_data = {}
+    info_attempted = info_empties = 0
     for ticker in ticker_list:
         cached = cache.get(ticker, {})
         age_ok = False
@@ -973,6 +986,9 @@ def main():
         else:
             try:
                 data = fetch_deep(ticker)
+                info_attempted += 1
+                if data.get("info_empty"):
+                    info_empties += 1
                 for k, val in model_map.get(ticker, {}).items():
                     if val is not None and k not in data: data[k] = val
                 cache[ticker]       = data
@@ -983,6 +999,17 @@ def main():
                 if cached:
                     stocks_data[ticker] = cached
                     print(f"     Falling back to cached data")
+
+    # Aggregate empty-rate verdict (issue #38): a few empty profiles among many is
+    # normal (delisted / thin names); if MOST came back empty the source is
+    # throttled/down and the step fails loudly instead of caching nothing. The
+    # rate is written to <DATA_DIR>/empty_rates.json for humans / Stock-App #109.
+    if info_attempted:
+        try:
+            tolerate_empties("deepdive_info", info_attempted, info_empties,
+                             max_empty_rate=0.5)
+        except EmptyUpstreamResponse as e:
+            print(f"  ❌ deep-dive profile step failed: {e}")
 
     save_cache(cache, CACHE_FILE)
 
