@@ -46,9 +46,9 @@ FUNDAMENTALS_FILE = config.FUNDAMENTALS_JSON
 CACHE_FILE        = config.MODEL_CACHE_JSON
 OUTPUT_FILE       = config.MODEL_JSON
 
-BATCH_SIZE  = 50
-SLEEP_SEC   = 2
-MAX_RETRIES = 2
+BATCH_SIZE  = config.YF_BATCH
+SLEEP_SEC   = config.YF_SLEEP
+MAX_RETRIES = config.YF_RETRIES
 MIN_PEERS   = 5
 STALE_DAYS  = 7   # recompute valuation if older than this
 

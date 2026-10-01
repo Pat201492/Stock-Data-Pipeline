@@ -31,7 +31,7 @@ Tracked items from the PR #1 review (commodities/options/API). Status updated as
 - [x] **Commodities expanded to ~30** + Livestock group; no-clobber guard on empty fetch.
 - [ ] **Computed exposure betas** — `EXPOSURE_COMPUTE=1 python commodity_exposure.py`; pending a yfinance cooldown.
 - [x] **yfinance rate-limit hardening** — `run_batches` (fundamentals/model) and universe enrich now: env-tunable pacing (`YF_SLEEP`/`YF_BATCH`/`YF_RETRIES`/`YF_BACKOFF`) + a **hard backoff when a whole batch fails** (the rate-limit signal) so the rest of the run isn't lost, + a wait before retry passes. Run big jobs with e.g. `YF_SLEEP=4 YF_BATCH=30`.
-- [ ] commodities.py / options.py use `yf.download` directly (not `run_batches`) — add the same backoff if they keep 429'ing.
+- [x] commodities.py / options.py now route through `yf_client.yf_download` (shared 429 retry + backoff, #18/#25); pacing for every stage comes from `config.py` (`YF_*`, plus `YF_BATCH_FUNDAMENTALS` / `YF_SLEEP_FUNDAMENTALS` for the heavier fundamentals stage).
 - [ ] Re-run incrementally (caches exist) to fill universe toward 2500.
 - [x] **Never run two yfinance collectors at once** (caused the first 429) — `.yfinance.lock` file lock in DATA_DIR acquired by run.py and standalone scripts (commodities, options, commodity_exposure); second collector blocks or exits with "another collector is running" message.
 

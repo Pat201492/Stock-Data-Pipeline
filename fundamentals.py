@@ -148,9 +148,9 @@ def _magic_formula(ticker, mkt_cap, yf_roc, yf_eey):
 UNIVERSE_FILE = config.UNIVERSE_JSON
 CACHE_FILE    = config.FUNDAMENTALS_CACHE_JSON
 OUTPUT_FILE   = config.FUNDAMENTALS_JSON
-BATCH_SIZE    = 20
-SLEEP_SEC     = 3
-MAX_RETRIES   = 2
+BATCH_SIZE    = config.YF_BATCH_FUNDAMENTALS
+SLEEP_SEC     = config.YF_SLEEP_FUNDAMENTALS
+MAX_RETRIES   = config.YF_RETRIES
 STALE_DAYS    = 7   # re-fetch if DB record older than this
 
 

@@ -58,6 +58,10 @@ YF_SLEEP   = float(os.environ.get("YF_SLEEP", 2))
 YF_BATCH   = int(os.environ.get("YF_BATCH", 50))
 YF_RETRIES = int(os.environ.get("YF_RETRIES", 2))
 YF_BACKOFF = float(os.environ.get("YF_BACKOFF", 45))  # hard sleep on rate-limit signal
+# fundamentals pulls .info + full statements per ticker -- heavier than a price
+# download -- so it runs smaller, slower batches by default. Still env-tunable.
+YF_BATCH_FUNDAMENTALS = int(os.environ.get("YF_BATCH_FUNDAMENTALS", 20))
+YF_SLEEP_FUNDAMENTALS = float(os.environ.get("YF_SLEEP_FUNDAMENTALS", 3))
 
 # ── DB paths ────────────────────────────────────────────────────────────────
 DB_PATH     = os.environ.get("DB_PATH")     or data_path("stocks.db")
