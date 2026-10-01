@@ -10,8 +10,11 @@ Usage:
   python run.py --from fundamentals   # start from fundamentals onwards
   python run.py --from model          # model + news only
   python run.py --from news           # news + prices only
+  python run.py --skip-validate       # skip the final integrity gate
 
-Pipeline: universe → fundamentals → model → news
+Pipeline: universe → fundamentals → model → news → … → validate
+The run always ends with `validate.py --strict` (unless --skip-validate); a
+failing validate makes the whole run exit 1 (issue #34).
 Log: run.log under DATA_DIR (config.RUN_LOG, appended each run)
 """
 
@@ -36,29 +39,31 @@ def log(msg):
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-def run_script(script):
+def run_script(script, args=None):
     path = os.path.join(SCRIPT_DIR, script)
     if not os.path.exists(path):
         log(f"❌ {script} not found at {path}"); return False
 
-    log(f"▶  Starting {script} …")
+    label = script + (" " + " ".join(args) if args else "")
+    log(f"▶  Starting {label} …")
     start = time.time()
     try:
         # cwd=SCRIPT_DIR ensures scripts save Excel/JSON to the Stock Tracker
         # folder regardless of where the terminal was when run.py was launched.
-        result  = subprocess.run([sys.executable, path], cwd=SCRIPT_DIR)
+        result  = subprocess.run([sys.executable, path, *(args or [])], cwd=SCRIPT_DIR)
         elapsed = round(time.time() - start, 1)
         if result.returncode == 0:
-            log(f"✅ {script} completed in {elapsed}s"); return True
+            log(f"✅ {label} completed in {elapsed}s"); return True
         else:
-            log(f"❌ {script} exited code {result.returncode} after {elapsed}s"); return False
+            log(f"❌ {label} exited code {result.returncode} after {elapsed}s"); return False
     except Exception as e:
-        log(f"❌ {script} crashed: {e}"); return False
+        log(f"❌ {label} crashed: {e}"); return False
 
 
 def parse_args():
     p = argparse.ArgumentParser(description="Stock Tracker pipeline runner")
     p.add_argument("--skip-universe",  action="store_true")
+    p.add_argument("--skip-validate",  action="store_true")
     p.add_argument("--from", dest="from_script", metavar="SCRIPT",
                    choices=["universe", "fundamentals", "model", "news",
                             "etf_universe", "commodities", "options",
@@ -89,6 +94,15 @@ def main():
             ok              = run_script(script)
             results[script] = ok
             if not ok: log(f"⚠️  {script} failed — continuing")
+            log("")
+
+        # Final integrity gate: validate.py --strict is the last stage. A failing
+        # validate fails the whole run (issue #34). --skip-validate opts out.
+        if not args.skip_validate:
+            log(DIV)
+            ok = run_script("validate.py", ["--strict"])
+            results["validate.py"] = ok
+            if not ok: log("⚠️  validate.py failed — run will exit 1")
             log("")
 
         log(DIV)
