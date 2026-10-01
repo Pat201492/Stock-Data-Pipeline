@@ -305,13 +305,30 @@ FIELD_MAPS = {
 # like-for-like (Trader-Screener #248). Distinct from `roic` (NOPAT / invested
 # capital), which is unchanged.
 
-def roc_greenblatt(ebit, current_assets, current_liabilities, ppe_net):
-    """Greenblatt ROC = EBIT / ((current assets - current liabilities) + net PP&E)."""
+def roc_greenblatt_detail(ebit, current_assets, current_liabilities, ppe_net):
+    """Greenblatt ROC with floored working capital.
+
+    capital = max(current assets - current liabilities, 0) + net PP&E. Flooring
+    net working capital at 0 stops capital-light filers (subscription, insurance,
+    network businesses that collect cash up front) from showing a negative or
+    exploding ROC and sorting to the bottom of the Magic rank (#28).
+
+    Returns (value, nwc_floored): value is the percent or None when any input is
+    missing or capital <= 0; nwc_floored is True when the NWC floor applied
+    (current liabilities exceeded current assets)."""
     vals = [sf(v) for v in (ebit, current_assets, current_liabilities, ppe_net)]
     if any(v is None for v in vals):
-        return None
+        return None, False
     e, ca, cl, ppe = vals
-    return pct(e, (ca - cl) + ppe)
+    nwc = ca - cl
+    nwc_floored = nwc < 0
+    capital = max(nwc, 0.0) + ppe
+    return pct(e, capital), nwc_floored
+
+def roc_greenblatt(ebit, current_assets, current_liabilities, ppe_net):
+    """Greenblatt ROC = EBIT / (max(current assets - current liabilities, 0) + net
+    PP&E). See roc_greenblatt_detail for the floor rationale (#28)."""
+    return roc_greenblatt_detail(ebit, current_assets, current_liabilities, ppe_net)[0]
 
 def ebit_ev_yield(ebit, mkt_cap, total_debt, cash):
     """Earnings yield = EBIT / EV, with EV = market cap + total debt - cash."""
