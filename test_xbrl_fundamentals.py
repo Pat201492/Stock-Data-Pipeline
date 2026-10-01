@@ -132,6 +132,73 @@ def test_operating_income_present_skips_ebit_fallback():
     assert out["derived"] == []
 
 
+# ── #29 net-interest EBIT fallback (NKE) ────────────────────────────────────────
+def test_ebit_net_interest_fallback_subtracts_positive_net():
+    # NKE: no OperatingIncomeLoss, no InterestExpenseNonoperating, only a positive
+    # net (interest income) -> EBIT = pretax - net.
+    accn = "0000000007-23-000001"
+    us_gaap = {}
+    us_gaap.update(_annual(
+        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+        "2023-01-01", "2023-12-31", 3.90e9, accn, "2024-02-01"))
+    us_gaap.update(_annual("InterestIncomeExpenseNonoperatingNet",
+                           "2023-01-01", "2023-12-31", 0.05e9, accn, "2024-02-01"))
+    out = xf.inputs_from_companyfacts(_cf(us_gaap))
+    assert out["operating_income"] == 3.85e9
+    assert "ebit=pretax-net_interest" in out["derived"]
+    assert "operating_income" not in out["missing"]
+
+
+def test_ebit_net_interest_fallback_adds_back_negative_net():
+    # A negative net (net interest expense) adds back: EBIT = pretax - (-0.40e9).
+    accn = "0000000008-23-000001"
+    us_gaap = {}
+    us_gaap.update(_annual(
+        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+        "2023-01-01", "2023-12-31", 3.00e9, accn, "2024-02-01"))
+    us_gaap.update(_annual("InterestIncomeExpenseNonoperatingNet",
+                           "2023-01-01", "2023-12-31", -0.40e9, accn, "2024-02-01"))
+    out = xf.inputs_from_companyfacts(_cf(us_gaap))
+    assert out["operating_income"] == 3.40e9
+    assert "ebit=pretax-net_interest" in out["derived"]
+
+
+def test_interest_expense_present_uses_pretax_plus_interest_not_net():
+    # When InterestExpenseNonoperating is present, the existing pretax+interest
+    # rule wins even if a net is also tagged.
+    accn = "0000000009-23-000001"
+    us_gaap = {}
+    us_gaap.update(_annual(
+        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+        "2023-01-01", "2023-12-31", 3.90e9, accn, "2024-02-01"))
+    us_gaap.update(_annual("InterestExpenseNonoperating",
+                           "2023-01-01", "2023-12-31", 0.10e9, accn, "2024-02-01"))
+    us_gaap.update(_annual("InterestIncomeExpenseNonoperatingNet",
+                           "2023-01-01", "2023-12-31", 0.05e9, accn, "2024-02-01"))
+    out = xf.inputs_from_companyfacts(_cf(us_gaap))
+    assert out["operating_income"] == 4.00e9
+    assert "ebit=pretax+interest" in out["derived"]
+    assert "ebit=pretax-net_interest" not in out["derived"]
+
+
+# ── #29 LongTermNotesPayable alias (ORCL) ───────────────────────────────────────
+def test_long_term_notes_payable_resolves_long_term_debt():
+    accn = "0000000010-23-000001"
+    us_gaap = _instant("LongTermNotesPayable", "2023-12-31", 122.34e9, accn, "2024-02-01")
+    out = xf.inputs_from_companyfacts(_cf(us_gaap))
+    assert out["long_term_debt"] == 122.34e9
+    assert "long_term_debt" not in out["missing"]
+
+
+def test_long_term_debt_noncurrent_wins_over_notes_payable():
+    accn = "0000000011-23-000001"
+    us_gaap = {}
+    us_gaap.update(_instant("LongTermDebtNoncurrent", "2023-12-31", 100.0e9, accn, "2024-02-01"))
+    us_gaap.update(_instant("LongTermNotesPayable", "2023-12-31", 122.34e9, accn, "2024-02-01"))
+    out = xf.inputs_from_companyfacts(_cf(us_gaap))
+    assert out["long_term_debt"] == 100.0e9      # priority: Noncurrent first
+
+
 # ── fetch_companyfacts ───────────────────────────────────────────────────────────
 class _Resp:
     def __init__(self, raw):
