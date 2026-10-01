@@ -212,6 +212,7 @@ def list_stocks(
             "pe": f.get("pe"),
             "roic": f.get("roic"),
             "roc_greenblatt": f.get("roc_greenblatt"),
+            "roc_nwc_floored": f.get("roc_nwc_floored"),
             "ebit_ev_yield": f.get("ebit_ev_yield"),
             "magic_source": f.get("magic_source"),
             "magic_period_end": f.get("magic_period_end"),

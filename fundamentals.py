@@ -23,7 +23,8 @@ from yf_client import yf_tickers
 from data_utils import (
     sf, fmt, pct, ratio, cagr,
     get_row, first_valid, second_valid, series_values, series_cagr,
-    extract_field, data_quality_score, roc_greenblatt, ebit_ev_yield,
+    extract_field, data_quality_score, roc_greenblatt, roc_greenblatt_detail,
+    ebit_ev_yield,
     load_cache, save_cache, run_batches,
 )
 
@@ -96,13 +97,14 @@ def _companyfacts_for_ticker(ticker):
     return xbrl_fundamentals.fetch_companyfacts(cik)
 
 
-def _magic_formula(ticker, mkt_cap, yf_roc, yf_eey):
+def _magic_formula(ticker, mkt_cap, yf_roc, yf_roc_floored, yf_eey):
     """Prefer as-filed XBRL for the two Magic Formula legs, yfinance per leg as
-    fallback. Returns the record fields: roc_greenblatt, ebit_ev_yield,
-    magic_source ("xbrl"|"yfinance"|"mixed"), magic_period_end, magic_accession,
-    magic_derived (comma-joined #259 rule names, or None)."""
+    fallback. Returns the record fields: roc_greenblatt, roc_nwc_floored,
+    ebit_ev_yield, magic_source ("xbrl"|"yfinance"|"mixed"), magic_period_end,
+    magic_accession, magic_derived (comma-joined #259 rule names, or None)."""
     yf_only = {
-        "roc_greenblatt": yf_roc, "ebit_ev_yield": yf_eey,
+        "roc_greenblatt": yf_roc, "roc_nwc_floored": yf_roc_floored,
+        "ebit_ev_yield": yf_eey,
         "magic_source": "yfinance", "magic_period_end": None,
         "magic_accession": None, "magic_derived": None,
     }
@@ -120,15 +122,18 @@ def _magic_formula(ticker, mkt_cap, yf_roc, yf_eey):
 
     inp = inputs_from_companyfacts(cf)
 
-    xbrl_roc = roc_greenblatt(inp["operating_income"], inp["assets_current"],
-                              inp["liabilities_current"], inp["ppe_net"])
+    xbrl_roc, xbrl_roc_floored = roc_greenblatt_detail(
+        inp["operating_income"], inp["assets_current"],
+        inp["liabilities_current"], inp["ppe_net"])
     # total debt = long_term_debt + short_term_debt (both must be present)
     ltd, std = inp["long_term_debt"], inp["short_term_debt"]
     total_debt = (ltd + std) if (ltd is not None and std is not None) else None
     xbrl_eey = ebit_ev_yield(inp["operating_income"], mkt_cap or None,
                              total_debt, inp["cash"])
 
-    roc = xbrl_roc if xbrl_roc is not None else yf_roc
+    use_xbrl_roc = xbrl_roc is not None
+    roc = xbrl_roc if use_xbrl_roc else yf_roc
+    roc_floored = xbrl_roc_floored if use_xbrl_roc else yf_roc_floored
     eey = xbrl_eey if xbrl_eey is not None else yf_eey
     srcs = {
         "xbrl" if xbrl_roc is not None else "yfinance",
@@ -138,6 +143,7 @@ def _magic_formula(ticker, mkt_cap, yf_roc, yf_eey):
 
     return {
         "roc_greenblatt": roc,
+        "roc_nwc_floored": roc_floored,
         "ebit_ev_yield": eey,
         "magic_source": source,
         "magic_period_end": inp.get("period_end"),
@@ -540,11 +546,12 @@ def extract_fundamentals(ticker, yft):
     # Magic Formula legs (Trader-Screener #248). Raw first_valid values, NOT the
     # `or 0` scalars above: a missing line must yield None, never a fake 0.
     # These are the yfinance fallback; _magic_formula prefers as-filed XBRL (#17).
-    yf_roc_gb = roc_greenblatt(first_valid(op_s), first_valid(ca_s),
-                               first_valid(cl_s), first_valid(ppe_s))
+    yf_roc_gb, yf_roc_floored = roc_greenblatt_detail(
+        first_valid(op_s), first_valid(ca_s),
+        first_valid(cl_s), first_valid(ppe_s))
     yf_ebit_ev_y = ebit_ev_yield(first_valid(op_s), mkt_cap or None,
                                  first_valid(debt_s), first_valid(cash_s))
-    magic = _magic_formula(ticker, mkt_cap, yf_roc_gb, yf_ebit_ev_y)
+    magic = _magic_formula(ticker, mkt_cap, yf_roc_gb, yf_roc_floored, yf_ebit_ev_y)
 
     record = {
         # Identity
@@ -625,6 +632,7 @@ def extract_fundamentals(ticker, yft):
         "roa":          roa,
         "roic":         roic,
         "roc_greenblatt": magic["roc_greenblatt"],
+        "roc_nwc_floored": magic["roc_nwc_floored"],
         "ebit_ev_yield":  magic["ebit_ev_yield"],
         "magic_source":     magic["magic_source"],
         "magic_period_end": magic["magic_period_end"],
