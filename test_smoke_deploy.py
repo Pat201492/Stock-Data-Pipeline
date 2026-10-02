@@ -191,3 +191,74 @@ def test_bootstrap_and_cron_cannot_overlap(monkeypatch):
 if __name__ == "__main__":
     import subprocess, sys
     sys.exit(subprocess.call([sys.executable, "-m", "pytest", "-q", __file__]))
+
+
+# ── catch-up on start (a PC asleep / off at the nightly hour) ────────────────
+
+def _write_last_run(tmp_path, finished_at):
+    import json as _json
+    (tmp_path / "fundamentals.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "last_run.json").write_text(
+        _json.dumps({"started_at": finished_at, "finished_at": finished_at,
+                     "ok": True, "steps": []}), encoding="utf-8")
+
+
+def test_catch_up_runs_when_last_run_is_stale(monkeypatch, tmp_path, _stub_pipeline):
+    from datetime import datetime, timezone, timedelta
+    now = datetime(2026, 10, 2, 12, tzinfo=timezone.utc)
+    _write_last_run(tmp_path, (now - timedelta(hours=30)).isoformat())
+    monkeypatch.setattr(api, "DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("CATCHUP_ON_START", raising=False)
+    monkeypatch.delenv("CATCHUP_AFTER_HOURS", raising=False)
+    t = api._maybe_catch_up(now=now)
+    assert t is not None
+    t.join(timeout=5)
+    assert _stub_pipeline == [1]
+
+
+def test_catch_up_skipped_when_last_run_is_recent(monkeypatch, tmp_path, _stub_pipeline):
+    from datetime import datetime, timezone, timedelta
+    now = datetime(2026, 10, 2, 12, tzinfo=timezone.utc)
+    _write_last_run(tmp_path, (now - timedelta(hours=10)).isoformat())
+    monkeypatch.setattr(api, "DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("CATCHUP_ON_START", raising=False)
+    assert api._maybe_catch_up(now=now) is None
+    assert _stub_pipeline == []
+
+
+def test_catch_up_runs_when_no_run_ever_recorded(monkeypatch, tmp_path, _stub_pipeline):
+    (tmp_path / "fundamentals.json").write_text("{}", encoding="utf-8")   # data, no last_run.json
+    monkeypatch.setattr(api, "DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("CATCHUP_ON_START", raising=False)
+    t = api._maybe_catch_up()
+    assert t is not None
+    t.join(timeout=5)
+    assert _stub_pipeline == [1]
+
+
+def test_catch_up_leaves_empty_volume_to_bootstrap(monkeypatch, tmp_path, _stub_pipeline):
+    monkeypatch.setattr(api, "DATA_DIR", str(tmp_path))      # no fundamentals.json
+    assert api._maybe_catch_up() is None
+    assert _stub_pipeline == []
+
+
+def test_catch_up_disabled_by_env(monkeypatch, tmp_path, _stub_pipeline):
+    _write_last_run(tmp_path, "2020-01-01T00:00:00+00:00")
+    monkeypatch.setattr(api, "DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CATCHUP_ON_START", "0")
+    assert api._maybe_catch_up() is None
+
+
+def test_nightly_job_has_misfire_grace(monkeypatch):
+    # A host asleep at the hour used to skip the night (APScheduler's ~1s default).
+    monkeypatch.setenv("RUN_SCHEDULER", "1")
+    monkeypatch.setenv("BOOTSTRAP_ON_EMPTY", "0")
+    monkeypatch.setenv("CATCHUP_ON_START", "0")
+    monkeypatch.delenv("PIPELINE_MISFIRE_GRACE_HOURS", raising=False)
+    api._start_scheduler()
+    try:
+        job = api.app.state.scheduler.get_job("nightly_pipeline")
+        assert job.misfire_grace_time == 6 * 3600
+        assert job.coalesce is True
+    finally:
+        api.app.state.scheduler.shutdown(wait=False)

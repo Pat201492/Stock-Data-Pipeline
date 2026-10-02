@@ -73,6 +73,35 @@ def _maybe_bootstrap():
     return t
 
 
+def _maybe_catch_up(now=None):
+    """Startup catch-up for a host that is not always on (a PC that was asleep or
+    off at the nightly hour). If the volume has data but the last run finished
+    more than CATCHUP_AFTER_HOURS ago (default 26) -- or no run was ever recorded --
+    start one run in the background. Same target and lock as the cron job, so it
+    can never overlap it. CATCHUP_ON_START=0 turns it off. Returns the thread, or None."""
+    from datetime import datetime, timezone, timedelta
+    if os.environ.get("CATCHUP_ON_START") == "0":
+        return None
+    if not os.path.exists(os.path.join(DATA_DIR, "fundamentals.json")):
+        return None                       # empty volume: _maybe_bootstrap's job
+    now = now or datetime.now(timezone.utc)
+    hours = float(os.environ.get("CATCHUP_AFTER_HOURS") or 26)
+    last = None
+    try:
+        with open(os.path.join(DATA_DIR, "last_run.json"), encoding="utf-8") as f:
+            last = datetime.fromisoformat(json.load(f)["finished_at"])
+    except Exception:
+        last = None                       # missing / unreadable: never ran here
+    if last is not None and now - last < timedelta(hours=hours):
+        return None
+    print(f"catch-up: last run {last.isoformat() if last else 'never recorded'} "
+          f"is older than {hours:g}h -- starting one pipeline run now", flush=True)
+    t = threading.Thread(target=_run_pipeline, name="catch-up", daemon=True)
+    t.start()
+    app.state.catchup_thread = t
+    return t
+
+
 @app.on_event("startup")
 def _start_scheduler():
     """Run the nightly pipeline in-process so the API and cron share one machine
@@ -87,13 +116,20 @@ def _start_scheduler():
     from apscheduler.schedulers.background import BackgroundScheduler
     from apscheduler.triggers.cron import CronTrigger
 
+    # PIPELINE_HOUR_UTC (default 2). misfire_grace_time: APScheduler's default is
+    # ~1s, so a host asleep at the hour silently skipped the night; within the
+    # grace window (PIPELINE_MISFIRE_GRACE_HOURS, default 6) a late wake still runs it.
+    hour = int(os.environ.get("PIPELINE_HOUR_UTC") or 2)
+    grace = int(float(os.environ.get("PIPELINE_MISFIRE_GRACE_HOURS") or 6) * 3600)
     sched = BackgroundScheduler(timezone="UTC")
-    sched.add_job(_run_pipeline, CronTrigger(hour=2, minute=0),
-                  id="nightly_pipeline", max_instances=1, coalesce=True)
+    sched.add_job(_run_pipeline, CronTrigger(hour=hour, minute=0),
+                  id="nightly_pipeline", max_instances=1, coalesce=True,
+                  misfire_grace_time=grace)
     sched.start()
     app.state.scheduler = sched
 
-    _maybe_bootstrap()
+    if _maybe_bootstrap() is None:
+        _maybe_catch_up()
 
 # Read-only data API → browser web clients need CORS. Allow all origins for now
 # (data is non-sensitive market data); tighten to the app domains before any

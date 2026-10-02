@@ -57,6 +57,32 @@ landed without exposing them. `smoke_deploy.py` fails loudly if either is false.
 the API without the cron (e.g. a read replica), deploy a second app config with
 `RUN_SCHEDULER` unset.
 
+## Host on a Windows PC (no Fly)
+
+Runs the same API + in-process nightly job on this machine, as a logon
+Scheduled Task (the same durability pattern as study-hall). The API listens on
+`http://127.0.0.1:8000` only, which is Trader-Screener's default API base.
+
+```powershell
+pip install -r requirements.txt
+setx FRED_API_KEY <key>                     # once; SEC_USER_AGENT falls back to EDGAR_USER_AGENT
+powershell -ExecutionPolicy Bypass -File deploy\windows\install-scheduled-task.ps1
+Start-ScheduledTask -TaskName StockDataPipeline
+python smoke_deploy.py http://127.0.0.1:8000 --allow-empty   # while the first fill runs
+```
+
+- **Data:** `%USERPROFILE%\.stock-data-pipeline\data` (outside the repo, so
+  switching branches never touches it). **Log:** `...\.stock-data-pipeline\logs\api.log`.
+- **First start** on an empty data dir runs one full pipeline in the background
+  (bootstrap). `/api/stocks` is empty until it finishes.
+- **A PC is not always on.** The nightly job (`PIPELINE_HOUR_UTC`, default 2 =
+  22:00 EDT) still runs if the PC wakes within `PIPELINE_MISFIRE_GRACE_HOURS`
+  (default 6). Otherwise, the next start runs a catch-up when the last run is older
+  than `CATCHUP_AFTER_HOURS` (default 26). `CATCHUP_ON_START=0` disables it.
+- The code runs from the repo checkout, so `git pull` + restarting the task
+  (`Stop-ScheduledTask` / `Start-ScheduledTask`) deploys a new version.
+- Remove: `install-scheduled-task.ps1 -Uninstall`.
+
 ## Local run
 ```bash
 pip install -r requirements.txt
