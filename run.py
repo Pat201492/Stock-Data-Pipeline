@@ -18,7 +18,7 @@ failing validate makes the whole run exit 1 (issue #34).
 Log: run.log under DATA_DIR (config.RUN_LOG, appended each run)
 """
 
-import argparse, sys, time
+import argparse, os, sys, time
 
 import config
 from step_runner import Step, run_steps, default_log as log, DIV
@@ -59,8 +59,14 @@ def main():
     log(DIV)
 
     with config.yfinance_lock():
+        # Children inherit the environment: tell them their parent holds the lock
+        # (see config.yfinance_lock) so they don't wait on it and fail.
+        os.environ[config.LOCK_HELD_ENV] = "1"
         t0 = time.time()
-        ok, results = run_steps(steps, from_step=args.from_script, log=log)
+        try:
+            ok, results = run_steps(steps, from_step=args.from_script, log=log)
+        finally:
+            os.environ.pop(config.LOCK_HELD_ENV, None)
 
         log(DIV)
         log(f"  Complete — {round(time.time() - t0, 1)}s total")
