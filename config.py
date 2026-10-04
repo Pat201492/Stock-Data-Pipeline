@@ -83,6 +83,9 @@ YFINANCE_LOCK_PATH = data_path(".yfinance.lock")
 import contextlib, sys, time
 
 
+LOCK_HELD_ENV = "YF_LOCK_HELD_BY_PARENT"
+
+
 @contextlib.contextmanager
 def yfinance_lock(wait_timeout=30, poll_interval=1):
     """Context manager for cross-process yfinance lock.
@@ -93,6 +96,14 @@ def yfinance_lock(wait_timeout=30, poll_interval=1):
         with yfinance_lock():
             # yfinance operations here
     """
+    # A child started by a collector that already holds the lock (run.py runs
+    # commodities.py / options.py as subprocesses inside its own lock) must not
+    # wait on its parent: it timed out after 30s and exited 1, so commodities and
+    # options failed on EVERY nightly run. The parent marks its children with
+    # YF_LOCK_HELD_BY_PARENT=1; a standalone run still locks normally.
+    if os.environ.get(LOCK_HELD_ENV) == "1":
+        yield
+        return
     lock_file = None
     try:
         lock_file = open(YFINANCE_LOCK_PATH, "w")

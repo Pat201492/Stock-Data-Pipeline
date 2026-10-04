@@ -48,7 +48,20 @@ Add-Content -Path $log -Value ("`n==== {0} start: port {1}, data {2}, FRED_API_K
     $stamp, $Port, $DataDir, [bool]$env:FRED_API_KEY, [bool]$env:SEC_USER_AGENT)
 
 Set-Location $repo
-# cmd handles the redirect so uvicorn's stderr lands in the log as plain text.
-# One worker only: every worker would start its own nightly job.
-& cmd.exe /c "`"$python`" -m uvicorn api:app --host 127.0.0.1 --port $Port --workers 1 >> `"$log`" 2>&1"
-exit $LASTEXITCODE
+# Keep the API up. The Scheduled Task's "restart on failure" only covers a failed
+# LAUNCH, not the program exiting later: on 2026-10-04 uvicorn ended mid-run with
+# no traceback and nothing restarted it until the next logon. So restart it here,
+# backing off 30s -> 5min if it keeps dying fast, and log every exit.
+$delay = 30
+while ($true) {
+    $t0 = Get-Date
+    # cmd handles the redirect so uvicorn's stderr lands in the log as plain text.
+    # One worker only: every worker would start its own nightly job.
+    & cmd.exe /c "`"$python`" -m uvicorn api:app --host 127.0.0.1 --port $Port --workers 1 >> `"$log`" 2>&1"
+    $code = $LASTEXITCODE
+    $ran = ((Get-Date) - $t0).TotalSeconds
+    if ($ran -gt 600) { $delay = 30 } else { $delay = [Math]::Min($delay * 2, 300) }
+    Add-Content -Path $log -Value ("==== {0} uvicorn exited (code {1}) after {2:N0}s -- restarting in {3}s" -f `
+        (Get-Date).ToString('s'), $code, $ran, $delay)
+    Start-Sleep -Seconds $delay
+}

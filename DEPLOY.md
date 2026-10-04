@@ -79,6 +79,10 @@ python smoke_deploy.py http://127.0.0.1:8000 --allow-empty   # while the first f
   22:00 EDT) still runs if the PC wakes within `PIPELINE_MISFIRE_GRACE_HOURS`
   (default 6). Otherwise, the next start runs a catch-up when the last run is older
   than `CATCHUP_AFTER_HOURS` (default 26). `CATCHUP_ON_START=0` disables it.
+- **Built for a PC that sleeps:** a run waits up to 10 min for the network after
+  wake (`NETWORK_WAIT_SECONDS`), holds Windows awake only while it runs
+  (`KEEP_AWAKE_DURING_RUN=0` to disable), and `run-local.ps1` restarts the API
+  if it ever exits (every exit is logged in `api.log`).
 - The code runs from the repo checkout, so `git pull` + restarting the task
   (`Stop-ScheduledTask` / `Start-ScheduledTask`) deploys a new version.
 - Remove: `install-scheduled-task.ps1 -Uninstall`.
