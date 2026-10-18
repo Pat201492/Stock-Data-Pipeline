@@ -6,9 +6,9 @@
 #
 # Serves http://127.0.0.1:<Port> (loopback only -- Trader-Screener's default API
 # base) and runs the full nightly sequence (market, political, validate) at
-# PIPELINE_HOUR_UTC. Data lives in -DataDir, outside the repo, so switching
+# 22:00 local time. Data lives in -DataDir, outside the repo, so switching
 # branches never touches it. A PC asleep at the hour runs the night when it wakes
-# (misfire grace) or at the next start (catch-up) -- see api.py.
+# (misfire grace), at the hourly catch-up check, or at the next start -- see api.py.
 #
 # Secrets are read from the USER environment at start and never written to the
 # task definition or the log:
@@ -36,6 +36,10 @@ $env:DATA_DIR = $DataDir
 $env:DB_PATH = Join-Path $DataDir 'stocks.db'
 $env:POL_DB_PATH = Join-Path $DataDir 'politicians.db'
 $env:RUN_SCHEDULER = '1'
+# Nightly at 22:00 in this PC's own zone (DST-aware). A fixed 02:00 UTC was
+# 22:00 Eastern only half the year. Override with user env PIPELINE_HOUR / PIPELINE_TZ.
+$env:PIPELINE_TZ = (UserEnv 'PIPELINE_TZ'); if (-not $env:PIPELINE_TZ) { $env:PIPELINE_TZ = 'local' }
+$env:PIPELINE_HOUR = (UserEnv 'PIPELINE_HOUR'); if (-not $env:PIPELINE_HOUR) { $env:PIPELINE_HOUR = '22' }
 $env:PYTHONIOENCODING = 'utf-8'
 $env:FRED_API_KEY = UserEnv 'FRED_API_KEY'
 $sec = UserEnv 'SEC_USER_AGENT'

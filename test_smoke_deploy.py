@@ -249,6 +249,63 @@ def test_catch_up_disabled_by_env(monkeypatch, tmp_path, _stub_pipeline):
     assert api._maybe_catch_up() is None
 
 
+def test_catch_up_skipped_while_a_run_holds_the_lock(monkeypatch, tmp_path, _stub_pipeline):
+    # The hourly check must not queue a second run behind one in progress.
+    _write_last_run(tmp_path, "2020-01-01T00:00:00+00:00")
+    monkeypatch.setattr(api, "DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("CATCHUP_ON_START", raising=False)
+    with api._pipeline_lock:
+        assert api._maybe_catch_up() is None
+    assert _stub_pipeline == []
+
+
+def _scheduler_with(monkeypatch, **env):
+    monkeypatch.setenv("RUN_SCHEDULER", "1")
+    monkeypatch.setenv("BOOTSTRAP_ON_EMPTY", "0")
+    monkeypatch.setenv("CATCHUP_ON_START", "0")
+    for k in ("PIPELINE_TZ", "PIPELINE_HOUR", "PIPELINE_HOUR_UTC", "CATCHUP_HOURLY"):
+        monkeypatch.delenv(k, raising=False)
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    api._start_scheduler()
+    return api.app.state.scheduler
+
+
+def test_nightly_hour_in_local_time(monkeypatch):
+    # The PC host: 22:00 in the machine's own zone, DST-aware.
+    from tzlocal import get_localzone
+    sched = _scheduler_with(monkeypatch, PIPELINE_TZ="local", PIPELINE_HOUR="22")
+    try:
+        trig = sched.get_job("nightly_pipeline").trigger
+        assert str(trig.timezone) == str(get_localzone())
+        assert str(trig.fields[trig.FIELD_NAMES.index("hour")]) == "22"
+    finally:
+        sched.shutdown(wait=False)
+
+
+def test_nightly_default_is_still_02_utc(monkeypatch):
+    sched = _scheduler_with(monkeypatch)
+    try:
+        trig = sched.get_job("nightly_pipeline").trigger
+        assert str(trig.timezone) == "UTC"
+        assert str(trig.fields[trig.FIELD_NAMES.index("hour")]) == "2"
+    finally:
+        sched.shutdown(wait=False)
+
+
+def test_hourly_catch_up_job(monkeypatch):
+    sched = _scheduler_with(monkeypatch)
+    try:
+        assert sched.get_job("catch_up_check") is not None
+    finally:
+        sched.shutdown(wait=False)
+    sched = _scheduler_with(monkeypatch, CATCHUP_HOURLY="0")
+    try:
+        assert sched.get_job("catch_up_check") is None
+    finally:
+        sched.shutdown(wait=False)
+
+
 def test_nightly_job_has_misfire_grace(monkeypatch):
     # A host asleep at the hour used to skip the night (APScheduler's ~1s default).
     monkeypatch.setenv("RUN_SCHEDULER", "1")

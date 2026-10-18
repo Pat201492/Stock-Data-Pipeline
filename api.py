@@ -82,6 +82,8 @@ def _maybe_catch_up(now=None):
     from datetime import datetime, timezone, timedelta
     if os.environ.get("CATCHUP_ON_START") == "0":
         return None
+    if _pipeline_lock.locked():
+        return None                       # a run is in progress; it will write last_run.json
     if not os.path.exists(os.path.join(DATA_DIR, "fundamentals.json")):
         return None                       # empty volume: _maybe_bootstrap's job
     now = now or datetime.now(timezone.utc)
@@ -116,15 +118,31 @@ def _start_scheduler():
     from apscheduler.schedulers.background import BackgroundScheduler
     from apscheduler.triggers.cron import CronTrigger
 
-    # PIPELINE_HOUR_UTC (default 2). misfire_grace_time: APScheduler's default is
-    # ~1s, so a host asleep at the hour silently skipped the night; within the
-    # grace window (PIPELINE_MISFIRE_GRACE_HOURS, default 6) a late wake still runs it.
-    hour = int(os.environ.get("PIPELINE_HOUR_UTC") or 2)
+    # The nightly hour, in PIPELINE_TZ (default UTC; "local" = this machine's
+    # zone, DST-aware). PIPELINE_HOUR, falling back to the older PIPELINE_HOUR_UTC,
+    # default 2. The PC host sets PIPELINE_TZ=local / PIPELINE_HOUR=22 in
+    # run-local.ps1: a fixed 02:00 UTC drifted from 22:00 to 21:00 Eastern when
+    # DST ends. misfire_grace_time: APScheduler's default is ~1s, so a host
+    # asleep at the hour silently skipped the night; within the grace window
+    # (PIPELINE_MISFIRE_GRACE_HOURS, default 6) a late wake still runs it.
+    tz = os.environ.get("PIPELINE_TZ") or "UTC"
+    if tz == "local":
+        from tzlocal import get_localzone
+        tz = get_localzone()
+    hour = int(os.environ.get("PIPELINE_HOUR") or os.environ.get("PIPELINE_HOUR_UTC") or 2)
     grace = int(float(os.environ.get("PIPELINE_MISFIRE_GRACE_HOURS") or 6) * 3600)
-    sched = BackgroundScheduler(timezone="UTC")
-    sched.add_job(_run_pipeline, CronTrigger(hour=hour, minute=0),
+    sched = BackgroundScheduler(timezone=tz)
+    sched.add_job(_run_pipeline, CronTrigger(hour=hour, minute=0, timezone=tz),
                   id="nightly_pipeline", max_instances=1, coalesce=True,
                   misfire_grace_time=grace)
+    # Hourly catch-up check: a PC asleep past the grace window and never
+    # restarted used to skip the night entirely -- start-up catch-up only fires
+    # when the API starts. Same rule as at start-up (last run older than
+    # CATCHUP_AFTER_HOURS, nothing running). CATCHUP_HOURLY=0 turns it off.
+    if os.environ.get("CATCHUP_HOURLY") != "0":
+        from apscheduler.triggers.interval import IntervalTrigger
+        sched.add_job(_maybe_catch_up, IntervalTrigger(hours=1), id="catch_up_check",
+                      max_instances=1, coalesce=True)
     sched.start()
     app.state.scheduler = sched
 

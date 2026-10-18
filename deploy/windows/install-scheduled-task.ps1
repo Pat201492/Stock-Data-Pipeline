@@ -34,7 +34,14 @@ if (-not (Test-Path $runner)) { throw "Runner not found: $runner" }
 
 $argument = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$runner`" -DataDir `"$DataDir`" -Port $Port"
 $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $argument -WorkingDirectory $PSScriptRoot
-$trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+$logon = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+# Watchdog: also fire every 15 minutes, indefinitely. While the runner is alive
+# MultipleInstances IgnoreNew makes these no-ops; if the runner itself was
+# killed (2026-10-17: ended with 0xC000013A and nothing started it again until
+# a manual start), the next tick brings it back within 15 minutes.
+$watchdog = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
+    -RepetitionInterval (New-TimeSpan -Minutes 15)
+$trigger = @($logon, $watchdog)
 $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Limited
 
 # No execution time limit (the 3-day default would kill a long-lived API);
@@ -54,7 +61,7 @@ if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
 
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
     -Principal $principal -Settings $settings `
-    -Description 'Stock-Data-Pipeline API + nightly job on this PC (127.0.0.1). Survives logout; restarts on failure.' | Out-Null
+    -Description 'Stock-Data-Pipeline API + nightly job on this PC (127.0.0.1). Survives logout; restarts on failure; 15-minute watchdog.' | Out-Null
 
 Write-Host "Installed scheduled task '$TaskName'."
 Write-Host "  runs:      powershell.exe -File $runner"
