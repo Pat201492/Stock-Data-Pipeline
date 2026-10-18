@@ -75,10 +75,18 @@ python smoke_deploy.py http://127.0.0.1:8000 --allow-empty   # while the first f
   switching branches never touches it). **Log:** `...\.stock-data-pipeline\logs\api.log`.
 - **First start** on an empty data dir runs one full pipeline in the background
   (bootstrap). `/api/stocks` is empty until it finishes.
-- **A PC is not always on.** The nightly job (`PIPELINE_HOUR_UTC`, default 2 =
-  22:00 EDT) still runs if the PC wakes within `PIPELINE_MISFIRE_GRACE_HOURS`
-  (default 6). Otherwise, the next start runs a catch-up when the last run is older
-  than `CATCHUP_AFTER_HOURS` (default 26). `CATCHUP_ON_START=0` disables it.
+- **A PC is not always on.** On the PC the nightly job runs at 22:00 local time
+  (`run-local.ps1` sets `PIPELINE_TZ=local`, `PIPELINE_HOUR=22`; DST-aware). The
+  code default, used on Fly, is still 02:00 UTC (`PIPELINE_HOUR` /
+  `PIPELINE_HOUR_UTC`, `PIPELINE_TZ`). It still runs if the PC wakes within
+  `PIPELINE_MISFIRE_GRACE_HOURS` (default 6). Otherwise a catch-up runs when the
+  last run is older than `CATCHUP_AFTER_HOURS` (default 26): at start-up, and from
+  an hourly check while the API is up (`CATCHUP_HOURLY=0` disables the hourly
+  check; `CATCHUP_ON_START=0` disables both).
+- **The task restarts itself.** Besides the logon trigger, the Scheduled Task fires
+  every 15 minutes; while the runner is alive that is a no-op (`IgnoreNew`), and if
+  the runner was killed it comes back within 15 minutes. Re-run
+  `install-scheduled-task.ps1` to apply.
 - **Built for a PC that sleeps:** a run waits up to 10 min for the network after
   wake (`NETWORK_WAIT_SECONDS`), holds Windows awake only while it runs
   (`KEEP_AWAKE_DURING_RUN=0` to disable), and `run-local.ps1` restarts the API
