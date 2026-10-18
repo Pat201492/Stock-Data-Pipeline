@@ -56,6 +56,20 @@ def _parse_date(s):
         return None
 
 
+def _logical_key(ticker, txn_date, insider, txn_type, shares):
+    """The uq_insider_logical index columns, compared the way SQLite compares
+    them. `shares` is a FLOAT column, so a stored 1322.0 and the mirror's JSON
+    1322 are the same row -- but as text "1322.0" != "1322", which let the
+    mirror re-insert trades already present and fail the whole step on the
+    unique index (nightly runs 2026-10-13 and 2026-10-16)."""
+    try:
+        shares = None if shares in (None, "") else float(shares)
+    except (TypeError, ValueError):
+        pass
+    d = None if txn_date in (None, "") else str(txn_date)[:10]
+    return (ticker, d, insider, txn_type, shares)
+
+
 def _trade_hash(idx_path, ticker, txn_date, txn_type, shares):
     raw = f"{idx_path}|{ticker}|{txn_date}|{txn_type}|{shares}"
     return hashlib.sha1(raw.encode()).hexdigest()
@@ -78,7 +92,7 @@ def ingest(full_refresh=False):
         # Logical keys already present from ANY source (incl. EDGAR) so the two
         # sources don't double-insert the same trade.
         existing_logical = {
-            "|".join("" if c is None else str(c) for c in r)
+            _logical_key(*r)
             for r in db.execute(text(
                 "SELECT ticker, transaction_date, insider_name, transaction_type, shares FROM insider_trades"
             )).fetchall()
@@ -108,8 +122,7 @@ def ingest(full_refresh=False):
                 if trade_id in existing_ids:
                     skipped += 1
                     continue
-                logical = "|".join("" if c is None else str(c)
-                                   for c in (ticker, txn_date, t.get("insider", ""), txn_type, shares))
+                logical = _logical_key(ticker, txn_date, t.get("insider", ""), txn_type, shares)
                 if logical in existing_logical:   # already have it from EDGAR or earlier
                     skipped += 1
                     continue
