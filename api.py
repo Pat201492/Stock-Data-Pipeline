@@ -14,7 +14,7 @@ without a server restart.
 """
 
 import json, os, sys, time, subprocess, threading
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,6 +23,8 @@ from fastapi.responses import JSONResponse
 import config
 from database import SessionLocal, News, PriceHistory, ETF, ETFHolding
 from serializers import db_columns
+from sqlalchemy import and_, func, not_, or_
+from politicians_database import InsiderTrade, SessionLocal as PolSession
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # Where the pipeline writes its outputs. On Fly this is the /data volume, shared
@@ -598,3 +600,212 @@ def etf_detail(ticker: str):
     if rec is None:
         raise HTTPException(404, f"{t} not found")
     return rec
+
+
+# ---------------------------------------------------------------------------
+# Insider trades (#57, #58): the market-wide Form 4 table in politicians.db.
+# SEC full-text search returns at most the newest 100 filings; this serves all
+# of them, filterable, with impossible source rows kept out of the default view.
+# ---------------------------------------------------------------------------
+
+# A title matches a role when it contains any of these (case-insensitive).
+_ROLE_WORDS = {
+    "officer": ("officer", "chief", "ceo", "cfo", "coo", "president",
+                "vp", "evp", "svp"),
+    "director": ("director",),
+    "ten_pct": ("10%",),
+}
+
+
+def _parse_day(value, name):
+    try:
+        return date.fromisoformat(value)
+    except (TypeError, ValueError):
+        raise HTTPException(400, f"{name} must be an ISO date (YYYY-MM-DD), got {value!r}")
+
+
+def _insider_window(from_, to):
+    """(from, to) dates; `to` defaults to today and `from` to 30 days before it."""
+    end = _parse_day(to, "to") if to else date.today()
+    start = _parse_day(from_, "from") if from_ else end - timedelta(days=30)
+    if start > end:
+        raise HTTPException(400, f"from {start} is after to {end}")
+    return start, end
+
+
+def _suspect_expr():
+    """SQL for the bad-row guard: price > 100k, value > $5bn, or shares x price
+    more than 10x away from the stated value. NULLs read as 0, so a row missing
+    a figure is never suspect for that reason (and never NULL -- which a
+    NOT would silently drop)."""
+    p = func.coalesce(InsiderTrade.price_per_share, 0)
+    v = func.coalesce(InsiderTrade.total_value, 0)
+    s = func.coalesce(InsiderTrade.shares, 0)
+    implied = p * s
+    return or_(p > 100_000, v > 5e9,
+               and_(implied > 0, v > 0, or_(v > implied * 10, implied > v * 10)))
+
+
+def _insider_filters(start, end, role=None, include_suspect=False):
+    conds = [InsiderTrade.transaction_date >= start,
+             InsiderTrade.transaction_date <= end]
+    if role:
+        words = _ROLE_WORDS.get(role)
+        if words is None:
+            raise HTTPException(400, f"role must be one of {sorted(_ROLE_WORDS)}")
+        conds.append(or_(*[InsiderTrade.insider_title.ilike(f"%{w}%") for w in words]))
+    if not include_suspect:
+        conds.append(not_(_suspect_expr()))
+    return conds
+
+
+def _is_suspect(r):
+    p, v, s = r.price_per_share or 0, r.total_value or 0, r.shares or 0
+    implied = p * s
+    return bool(p > 100_000 or v > 5e9
+                or (implied > 0 and v > 0 and (v > implied * 10 or implied > v * 10)))
+
+
+def _insider_row(r):
+    out = _serialize(r, InsiderTrade, drop=())
+    for k, v in out.items():
+        if isinstance(v, date):
+            out[k] = v.isoformat()
+    url = r.source_url or ""
+    out["sec_url"] = url[len("mirror:"):] if url.startswith("mirror:") else url
+    out["suspect"] = _is_suspect(r)
+    return out
+
+
+@app.get("/api/insider-trades")
+def insider_trades(
+    from_: Optional[str] = Query(None, alias="from"),
+    to: Optional[str] = None,
+    type: Optional[str] = None,
+    ticker: Optional[str] = None,
+    insider: Optional[str] = None,
+    role: Optional[str] = None,
+    min_value: Optional[float] = None,
+    sort: str = "date",
+    limit: int = Query(200, ge=1),
+    offset: int = Query(0, ge=0),
+    include_suspect: int = 0,
+):
+    """Insider trades by transaction date (default the last 30 days), newest
+    first or largest first (`sort=value`). `total` counts every match before
+    limit/offset; suspect rows are neither returned nor counted unless
+    `include_suspect=1`."""
+    start, end = _insider_window(from_, to)
+    if sort not in ("date", "value"):
+        raise HTTPException(400, "sort must be date or value")
+    limit = min(limit, 2000)
+    codes = sorted({c.strip().upper() for c in (type or "").split(",") if c.strip()})
+    t = (ticker or "").strip().upper()
+    who = (insider or "").strip()
+    key = (f"insider:{start}:{end}:{','.join(codes)}:{t}:{who.lower()}:{role}:"
+           f"{min_value}:{sort}:{limit}:{offset}:{int(bool(include_suspect))}")
+
+    def build():
+        db = PolSession()
+        try:
+            conds = _insider_filters(start, end, role, bool(include_suspect))
+            if codes:
+                conds.append(InsiderTrade.transaction_type.in_(codes))
+            if t:
+                conds.append(func.upper(InsiderTrade.ticker) == t)
+            if who:
+                conds.append(InsiderTrade.insider_name.ilike(f"%{who}%"))
+            if min_value is not None:
+                conds.append(InsiderTrade.total_value >= min_value)
+            q = db.query(InsiderTrade).filter(*conds)
+            total = q.count()
+            if sort == "value":
+                q = q.order_by(InsiderTrade.total_value.desc().nullslast(),
+                               InsiderTrade.transaction_date.desc())
+            else:
+                q = q.order_by(InsiderTrade.transaction_date.desc(),
+                               InsiderTrade.filing_id)
+            rows = [_insider_row(r) for r in q.offset(offset).limit(limit).all()]
+            return {"count": len(rows), "total": total, "rows": rows}
+        finally:
+            db.close()
+
+    return _db_cached(key, build)
+
+
+@app.get("/api/insider-trades/rollups")
+def insider_rollups(
+    from_: Optional[str] = Query(None, alias="from"),
+    to: Optional[str] = None,
+    role: Optional[str] = None,
+    include_suspect: int = 0,
+):
+    """The three market reads: the 25 largest buys, the 25 tickers insiders
+    sold most (by value), and cluster buys -- 3+ different insiders buying one
+    ticker within any 14-day window in the range."""
+    start, end = _insider_window(from_, to)
+    key = f"insider-rollups:{start}:{end}:{role}:{int(bool(include_suspect))}"
+
+    def build():
+        db = PolSession()
+        try:
+            conds = _insider_filters(start, end, role, bool(include_suspect))
+            # Rollups are per company: a row with no real ticker (blank, or the
+            # source placeholder NONE) cannot be one.
+            conds.append(func.upper(func.coalesce(InsiderTrade.ticker, "")).notin_(["", "NONE"]))
+            top =(db.query(InsiderTrade)
+                   .filter(*conds, InsiderTrade.transaction_type == "P")
+                   .order_by(InsiderTrade.total_value.desc().nullslast())
+                   .limit(25).all())
+            sold = (db.query(InsiderTrade.ticker,
+                             func.max(InsiderTrade.company_name),
+                             func.sum(func.coalesce(InsiderTrade.total_value, 0)),
+                             func.count(InsiderTrade.filing_id),
+                             func.count(func.distinct(InsiderTrade.insider_name)))
+                    .filter(*conds, InsiderTrade.transaction_type == "S")
+                    .group_by(InsiderTrade.ticker)
+                    .order_by(func.sum(func.coalesce(InsiderTrade.total_value, 0)).desc())
+                    .limit(25).all())
+            buys = (db.query(InsiderTrade.ticker, InsiderTrade.company_name,
+                             InsiderTrade.insider_name, InsiderTrade.transaction_date,
+                             InsiderTrade.total_value)
+                    .filter(*conds, InsiderTrade.transaction_type == "P")
+                    .order_by(InsiderTrade.ticker, InsiderTrade.transaction_date).all())
+            return {
+                "top_buys": [_insider_row(r) for r in top],
+                "most_sold": [{"ticker": tk, "company_name": cn, "sell_value": sv,
+                               "sell_count": sc, "insiders": ni}
+                              for tk, cn, sv, sc, ni in sold],
+                "clusters": _clusters(buys),
+            }
+        finally:
+            db.close()
+
+    return _db_cached(key, build)
+
+
+def _clusters(buys, window_days=14, min_insiders=3):
+    """Per ticker, the 14-day window holding the most distinct buyers; kept
+    when that is at least 3. `buys` is (ticker, company, insider, date, value)
+    sorted by ticker then date."""
+    by_ticker = {}
+    for b in buys:
+        if b[0]:
+            by_ticker.setdefault(b[0], []).append(b)
+    out = []
+    for tk, rows in by_ticker.items():
+        best = None
+        for i, first in enumerate(rows):
+            stop = first[3] + timedelta(days=window_days)
+            win = [r for r in rows[i:] if r[3] <= stop]
+            people = {r[2] for r in win if r[2]}
+            if len(people) >= min_insiders and (best is None or len(people) > best[0]):
+                best = (len(people), win)
+        if best:
+            n, win = best
+            out.append({"ticker": tk, "company_name": win[0][1], "insiders": n,
+                        "buy_value": sum(r[4] or 0 for r in win),
+                        "first_date": win[0][3].isoformat(),
+                        "last_date": win[-1][3].isoformat()})
+    out.sort(key=lambda c: (c["insiders"], c["buy_value"]), reverse=True)
+    return out
