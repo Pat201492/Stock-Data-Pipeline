@@ -182,3 +182,78 @@ def test_rollups_clusters():
     c = clusters[0]
     assert c["insiders"] == 3 and c["buy_value"] == 180_000
     assert c["first_date"] == "2026-09-01" and c["last_date"] == "2026-09-10"
+
+
+# -- #60: a cluster must put real money in ----------------------------------
+def _add(rows):
+    db = SessionLocal()
+    try:
+        db.add_all(rows)
+        db.commit()
+    finally:
+        db.close()
+    api._db_cache.clear()
+
+
+def test_cluster_under_min_value_is_not_a_cluster():
+    # TSM-shaped: three insiders, a few thousand dollars each.
+    _add([_t("TINY", n, date(2026, 9, 7), shares=40, price=79.39)
+          for n in ("T1", "T2", "T3")])
+    clusters = _get("/api/insider-trades/rollups", **RANGE)["clusters"]
+    assert "TINY" not in {c["ticker"] for c in clusters}
+    assert "CLST" in {c["ticker"] for c in clusters}           # $180k: kept
+    every = _get("/api/insider-trades/rollups", cluster_min_value=0, cluster_min_avg=0, **RANGE)["clusters"]
+    assert "TINY" in {c["ticker"] for c in every}
+
+
+def test_cluster_at_exactly_min_value_is_kept():
+    _add([_t("EXCT", n, date(2026, 9, 7), shares=1000, price=33.0, value=v)
+          for n, v in (("E1", 30_000), ("E2", 30_000), ("E3", 40_000))])
+    clusters = _get("/api/insider-trades/rollups", **RANGE)["clusters"]
+    assert "EXCT" in {c["ticker"] for c in clusters}
+
+
+def test_negative_cluster_min_value_is_400():
+    r = client.get("/api/insider-trades/rollups", params={"cluster_min_value": -1})
+    assert r.status_code == 400
+
+
+def test_cluster_of_tiny_plan_buys_is_not_a_cluster():
+    # TSM on 2026-10-07: 30 insiders, $121k in total -- over the $100k floor,
+    # but ~$4k each. The per-insider average floor keeps it out.
+    _add([_t("PLAN", f"Emp {i}", date(2026, 9, 7), shares=51, price=79.39)
+          for i in range(30)])
+    clusters = _get("/api/insider-trades/rollups", **RANGE)["clusters"]
+    assert "PLAN" not in {c["ticker"] for c in clusters}
+    loose = _get("/api/insider-trades/rollups", cluster_min_avg=0, **RANGE)["clusters"]
+    assert "PLAN" in {c["ticker"] for c in loose}
+    r = client.get("/api/insider-trades/rollups", params={"cluster_min_avg": -1})
+    assert r.status_code == 400
+
+
+# -- #61: a stake no insider could hold --------------------------------------
+def test_impossible_holding_is_suspect():
+    # IHT-shaped: 7.94M shares owned after, at $50,410.80, would be a $400bn
+    # stake -- the price is wrong.
+    row = _t("IHTX", "James Wirth", date(2026, 9, 21), ttype="S", shares=43_111,
+             price=50_410.8, title="President & CEO")
+    row.shares_owned_after = 7_940_275
+    big_buy = _t("IHTB", "Odd Buyer", date(2026, 9, 21), ttype="P", shares=43_111, price=50_410.8)
+    big_buy.shares_owned_after = 7_940_275
+    _add([row, big_buy])
+    default = _get("/api/insider-trades", **RANGE)
+    assert not {"IHTX", "IHTB"} & {r["ticker"] for r in default["rows"]}
+    roll = _get("/api/insider-trades/rollups", **RANGE)
+    assert "IHTX" not in {s["ticker"] for s in roll["most_sold"]}
+    assert "IHTB" not in {r["ticker"] for r in roll["top_buys"]}
+    shown = _get("/api/insider-trades", include_suspect=1, ticker="IHTX", **RANGE)["rows"]
+    assert len(shown) == 1 and shown[0]["suspect"] is True
+
+
+def test_ordinary_large_holding_is_not_suspect():
+    # A founder-sized stake ($50bn) at a real price stays visible.
+    row = _t("FNDR", "Founder", date(2026, 9, 22), ttype="S", shares=1000, price=400.0)
+    row.shares_owned_after = 125_000_000
+    _add([row])
+    rows = _get("/api/insider-trades", ticker="FNDR", **RANGE)["rows"]
+    assert len(rows) == 1 and rows[0]["suspect"] is False

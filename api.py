@@ -633,17 +633,31 @@ def _insider_window(from_, to):
     return start, end
 
 
+# No insider stake on the market is worth this much; a row implying one has a
+# bad price (IHT: a ~$2 stock "sold" at $50,410.80, a $400bn stake after).
+# Checked on a year of live rows: it flags exactly those IHT rows. A check
+# against stocks.db closes was tried and dropped (#61) -- it flagged option
+# exercises at strike, foreign insiders' home-market share prices against the
+# US ADR close, and rows on a ticker whose stored close was wrong.
+MAX_HOLDING_VALUE = 3e11
+
+
 def _suspect_expr():
-    """SQL for the bad-row guard: price > 100k, value > $5bn, or shares x price
-    more than 10x away from the stated value. NULLs read as 0, so a row missing
-    a figure is never suspect for that reason (and never NULL -- which a
-    NOT would silently drop)."""
+    """SQL for the bad-row guard (#57, #61). A row is suspect when:
+      * price > $100,000, or value > $5bn;
+      * shares x price is more than 10x away from the stated value;
+      * shares owned after x price exceeds MAX_HOLDING_VALUE.
+    NULLs read as 0, so a missing figure never makes a row suspect (and the
+    expression is never NULL -- which a NOT would silently drop)."""
     p = func.coalesce(InsiderTrade.price_per_share, 0)
     v = func.coalesce(InsiderTrade.total_value, 0)
     s = func.coalesce(InsiderTrade.shares, 0)
+    after = func.coalesce(InsiderTrade.shares_owned_after, 0)
     implied = p * s
-    return or_(p > 100_000, v > 5e9,
-               and_(implied > 0, v > 0, or_(v > implied * 10, implied > v * 10)))
+    rules = [p > 100_000, v > 5e9,
+             and_(implied > 0, v > 0, or_(v > implied * 10, implied > v * 10)),
+             after * p > MAX_HOLDING_VALUE]
+    return or_(*rules)
 
 
 def _insider_filters(start, end, role=None, include_suspect=False):
@@ -659,21 +673,14 @@ def _insider_filters(start, end, role=None, include_suspect=False):
     return conds
 
 
-def _is_suspect(r):
-    p, v, s = r.price_per_share or 0, r.total_value or 0, r.shares or 0
-    implied = p * s
-    return bool(p > 100_000 or v > 5e9
-                or (implied > 0 and v > 0 and (v > implied * 10 or implied > v * 10)))
-
-
-def _insider_row(r):
+def _insider_row(r, suspect):
     out = _serialize(r, InsiderTrade, drop=())
     for k, v in out.items():
         if isinstance(v, date):
             out[k] = v.isoformat()
     url = r.source_url or ""
     out["sec_url"] = url[len("mirror:"):] if url.startswith("mirror:") else url
-    out["suspect"] = _is_suspect(r)
+    out["suspect"] = bool(suspect)
     return out
 
 
@@ -717,15 +724,15 @@ def insider_trades(
                 conds.append(InsiderTrade.insider_name.ilike(f"%{who}%"))
             if min_value is not None:
                 conds.append(InsiderTrade.total_value >= min_value)
-            q = db.query(InsiderTrade).filter(*conds)
-            total = q.count()
+            q = db.query(InsiderTrade, _suspect_expr()).filter(*conds)
+            total = db.query(func.count(InsiderTrade.filing_id)).filter(*conds).scalar()
             if sort == "value":
                 q = q.order_by(InsiderTrade.total_value.desc().nullslast(),
                                InsiderTrade.transaction_date.desc())
             else:
                 q = q.order_by(InsiderTrade.transaction_date.desc(),
                                InsiderTrade.filing_id)
-            rows = [_insider_row(r) for r in q.offset(offset).limit(limit).all()]
+            rows = [_insider_row(r, sus) for r, sus in q.offset(offset).limit(limit).all()]
             return {"count": len(rows), "total": total, "rows": rows}
         finally:
             db.close()
@@ -739,12 +746,19 @@ def insider_rollups(
     to: Optional[str] = None,
     role: Optional[str] = None,
     include_suspect: int = 0,
+    cluster_min_value: float = 100_000,
+    cluster_min_avg: float = 10_000,
 ):
     """The three market reads: the 25 largest buys, the 25 tickers insiders
     sold most (by value), and cluster buys -- 3+ different insiders buying one
-    ticker within any 14-day window in the range."""
+    ticker within any 14-day window in the range, together at least
+    `cluster_min_value` dollars and averaging at least `cluster_min_avg` per
+    insider (#60: TSM's 30 share-plan buys totalled $121k, ~$4k each)."""
     start, end = _insider_window(from_, to)
-    key = f"insider-rollups:{start}:{end}:{role}:{int(bool(include_suspect))}"
+    if cluster_min_value < 0 or cluster_min_avg < 0:
+        raise HTTPException(400, "cluster_min_value and cluster_min_avg must be >= 0")
+    key = (f"insider-rollups:{start}:{end}:{role}:{int(bool(include_suspect))}:"
+           f"{cluster_min_value}:{cluster_min_avg}")
 
     def build():
         db = PolSession()
@@ -753,7 +767,7 @@ def insider_rollups(
             # Rollups are per company: a row with no real ticker (blank, or the
             # source placeholder NONE) cannot be one.
             conds.append(func.upper(func.coalesce(InsiderTrade.ticker, "")).notin_(["", "NONE"]))
-            top =(db.query(InsiderTrade)
+            top = (db.query(InsiderTrade, _suspect_expr())
                    .filter(*conds, InsiderTrade.transaction_type == "P")
                    .order_by(InsiderTrade.total_value.desc().nullslast())
                    .limit(25).all())
@@ -772,11 +786,12 @@ def insider_rollups(
                     .filter(*conds, InsiderTrade.transaction_type == "P")
                     .order_by(InsiderTrade.ticker, InsiderTrade.transaction_date).all())
             return {
-                "top_buys": [_insider_row(r) for r in top],
+                "top_buys": [_insider_row(r, sus) for r, sus in top],
                 "most_sold": [{"ticker": tk, "company_name": cn, "sell_value": sv,
                                "sell_count": sc, "insiders": ni}
                               for tk, cn, sv, sc, ni in sold],
-                "clusters": _clusters(buys),
+                "clusters": _clusters(buys, min_value=cluster_min_value,
+                                      min_avg=cluster_min_avg),
             }
         finally:
             db.close()
@@ -784,10 +799,11 @@ def insider_rollups(
     return _db_cached(key, build)
 
 
-def _clusters(buys, window_days=14, min_insiders=3):
-    """Per ticker, the 14-day window holding the most distinct buyers; kept
-    when that is at least 3. `buys` is (ticker, company, insider, date, value)
-    sorted by ticker then date."""
+def _clusters(buys, window_days=14, min_insiders=3, min_value=0, min_avg=0):
+    """Per ticker, the 14-day window holding the most distinct buyers among
+    windows with at least 3 of them, at least `min_value` bought in total and
+    at least `min_avg` per buyer. `buys` is (ticker, company, insider, date,
+    value) sorted by ticker then date."""
     by_ticker = {}
     for b in buys:
         if b[0]:
@@ -799,7 +815,10 @@ def _clusters(buys, window_days=14, min_insiders=3):
             stop = first[3] + timedelta(days=window_days)
             win = [r for r in rows[i:] if r[3] <= stop]
             people = {r[2] for r in win if r[2]}
-            if len(people) >= min_insiders and (best is None or len(people) > best[0]):
+            value = sum(r[4] or 0 for r in win)
+            if len(people) >= min_insiders and value >= min_value \
+                    and value >= min_avg * len(people) \
+                    and (best is None or len(people) > best[0]):
                 best = (len(people), win)
         if best:
             n, win = best
