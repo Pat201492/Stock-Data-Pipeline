@@ -41,7 +41,15 @@ $logon = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 # a manual start), the next tick brings it back within 15 minutes.
 $watchdog = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
     -RepetitionInterval (New-TimeSpan -Minutes 15)
-$trigger = @($logon, $watchdog)
+# Wake for the nightly run (#63): on 2026-10-19 the PC slept on idle from 19:35
+# to 22:08 and the 22:00 run never began. A daily trigger 5 minutes before the
+# hour, with WakeToRun below, wakes the machine; IgnoreNew makes the launch a
+# no-op while the runner is already up. The hour follows PIPELINE_HOUR (user
+# env, default 22 -- the same default run-local.ps1 uses).
+$hour = [Environment]::GetEnvironmentVariable('PIPELINE_HOUR', 'User')
+if (-not $hour) { $hour = 22 }
+$wake = New-ScheduledTaskTrigger -Daily -At ([datetime]::Today.AddHours([int]$hour).AddMinutes(-5))
+$trigger = @($logon, $watchdog, $wake)
 $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Limited
 
 # No execution time limit (the 3-day default would kill a long-lived API);
@@ -50,6 +58,7 @@ $settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries `
     -DontStopIfGoingOnBatteries `
     -StartWhenAvailable `
+    -WakeToRun `
     -RestartCount 3 `
     -RestartInterval (New-TimeSpan -Minutes 1) `
     -ExecutionTimeLimit ([TimeSpan]::Zero) `
@@ -61,7 +70,7 @@ if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
 
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
     -Principal $principal -Settings $settings `
-    -Description 'Stock-Data-Pipeline API + nightly job on this PC (127.0.0.1). Survives logout; restarts on failure; 15-minute watchdog.' | Out-Null
+    -Description 'Stock-Data-Pipeline API + nightly job on this PC (127.0.0.1). Survives logout; restarts on failure; 15-minute watchdog; wakes the PC before the nightly run.' | Out-Null
 
 Write-Host "Installed scheduled task '$TaskName'."
 Write-Host "  runs:      powershell.exe -File $runner"

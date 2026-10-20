@@ -75,12 +75,88 @@ def _maybe_bootstrap():
     return t
 
 
+def _pipeline_tz():
+    """The nightly job's zone: PIPELINE_TZ (default UTC; "local" = this
+    machine's zone, DST-aware)."""
+    tz = os.environ.get("PIPELINE_TZ") or "UTC"
+    if tz == "local":
+        from tzlocal import get_localzone
+        return get_localzone()
+    from zoneinfo import ZoneInfo
+    return ZoneInfo(tz)
+
+
+def _pipeline_hour():
+    return int(os.environ.get("PIPELINE_HOUR") or os.environ.get("PIPELINE_HOUR_UTC") or 2)
+
+
+def _grace_hours():
+    return float(os.environ.get("PIPELINE_MISFIRE_GRACE_HOURS") or 6)
+
+
+def _last_slot(now):
+    """The most recent nightly slot (PIPELINE_HOUR:00 in PIPELINE_TZ) at or
+    before `now`, as an aware datetime."""
+    from datetime import timedelta
+    local = now.astimezone(_pipeline_tz())
+    slot = local.replace(hour=_pipeline_hour(), minute=0, second=0, microsecond=0)
+    if slot > local:
+        slot -= timedelta(days=1)
+    return slot
+
+
+def _last_run_times():
+    """(started_at, finished_at) of the last recorded run, either None."""
+    from datetime import datetime
+    try:
+        with open(os.path.join(DATA_DIR, "last_run.json"), encoding="utf-8") as f:
+            rec = json.load(f)
+    except Exception:
+        return None, None                 # missing / unreadable: never ran here
+    out = []
+    for k in ("started_at", "finished_at"):
+        try:
+            out.append(datetime.fromisoformat(rec[k]))
+        except Exception:
+            out.append(None)
+    return tuple(out)
+
+
+def _missed_slot(now):
+    """The nightly slot this host slept through, or None: the latest slot is
+    within the misfire grace window and no run has started since it (#63 --
+    asleep 19:35-22:08 on 2026-10-19, so the 22:00 run never began)."""
+    from datetime import timedelta
+    slot = _last_slot(now)
+    if now - slot > timedelta(hours=_grace_hours()):
+        return None
+    started, _ = _last_run_times()
+    if started is not None and started >= slot:
+        return None
+    return slot
+
+
+def _nightly():
+    """The cron job's target. After a sleep the scheduler's timer fires late --
+    by then catch-up may already have run tonight's pipeline, so a run that
+    started since the slot (or one in progress) means there is nothing to do."""
+    from datetime import datetime, timezone
+    if _pipeline_lock.locked() or _missed_slot(datetime.now(timezone.utc)) is None:
+        print("nightly: tonight's run already started -- skipping", flush=True)
+        return
+    _run_pipeline()
+
+
 def _maybe_catch_up(now=None):
-    """Startup catch-up for a host that is not always on (a PC that was asleep or
-    off at the nightly hour). If the volume has data but the last run finished
-    more than CATCHUP_AFTER_HOURS ago (default 26) -- or no run was ever recorded --
-    start one run in the background. Same target and lock as the cron job, so it
-    can never overlap it. CATCHUP_ON_START=0 turns it off. Returns the thread, or None."""
+    """Catch-up for a host that is not always on (a PC that was asleep or off at
+    the nightly hour). Start one run in the background when the volume has data
+    and either:
+      * tonight's slot was missed (#63): it passed within the misfire grace
+        window and no run has started since; or
+      * the last run finished more than CATCHUP_AFTER_HOURS ago (default 26),
+        or no run was ever recorded.
+    Same target and lock as the cron job, so it can never overlap it.
+    CATCHUP_ON_START=0 turns it off. Returns the thread, or None."""
     from datetime import datetime, timezone, timedelta
     if os.environ.get("CATCHUP_ON_START") == "0":
         return None
@@ -90,16 +166,13 @@ def _maybe_catch_up(now=None):
         return None                       # empty volume: _maybe_bootstrap's job
     now = now or datetime.now(timezone.utc)
     hours = float(os.environ.get("CATCHUP_AFTER_HOURS") or 26)
-    last = None
-    try:
-        with open(os.path.join(DATA_DIR, "last_run.json"), encoding="utf-8") as f:
-            last = datetime.fromisoformat(json.load(f)["finished_at"])
-    except Exception:
-        last = None                       # missing / unreadable: never ran here
-    if last is not None and now - last < timedelta(hours=hours):
+    _, last = _last_run_times()
+    missed = _missed_slot(now)
+    if missed is None and last is not None and now - last < timedelta(hours=hours):
         return None
-    print(f"catch-up: last run {last.isoformat() if last else 'never recorded'} "
-          f"is older than {hours:g}h -- starting one pipeline run now", flush=True)
+    why = (f"missed the {missed.isoformat()} slot" if missed is not None else
+           f"last run {last.isoformat() if last else 'never recorded'} is older than {hours:g}h")
+    print(f"catch-up: {why} -- starting one pipeline run now", flush=True)
     t = threading.Thread(target=_run_pipeline, name="catch-up", daemon=True)
     t.start()
     app.state.catchup_thread = t
@@ -127,23 +200,21 @@ def _start_scheduler():
     # DST ends. misfire_grace_time: APScheduler's default is ~1s, so a host
     # asleep at the hour silently skipped the night; within the grace window
     # (PIPELINE_MISFIRE_GRACE_HOURS, default 6) a late wake still runs it.
-    tz = os.environ.get("PIPELINE_TZ") or "UTC"
-    if tz == "local":
-        from tzlocal import get_localzone
-        tz = get_localzone()
-    hour = int(os.environ.get("PIPELINE_HOUR") or os.environ.get("PIPELINE_HOUR_UTC") or 2)
-    grace = int(float(os.environ.get("PIPELINE_MISFIRE_GRACE_HOURS") or 6) * 3600)
+    tz = _pipeline_tz()
+    hour = _pipeline_hour()
+    grace = int(_grace_hours() * 3600)
     sched = BackgroundScheduler(timezone=tz)
-    sched.add_job(_run_pipeline, CronTrigger(hour=hour, minute=0, timezone=tz),
+    sched.add_job(_nightly, CronTrigger(hour=hour, minute=0, timezone=tz),
                   id="nightly_pipeline", max_instances=1, coalesce=True,
                   misfire_grace_time=grace)
-    # Hourly catch-up check: a PC asleep past the grace window and never
-    # restarted used to skip the night entirely -- start-up catch-up only fires
-    # when the API starts. Same rule as at start-up (last run older than
-    # CATCHUP_AFTER_HOURS, nothing running). CATCHUP_HOURLY=0 turns it off.
+    # Catch-up check every 15 minutes: a PC asleep at the hour used to skip the
+    # night -- start-up catch-up only fires when the API starts, and the cron
+    # timer itself runs late after a sleep. Same rule as at start-up (a missed
+    # slot, or the last run older than CATCHUP_AFTER_HOURS; nothing running).
+    # CATCHUP_HOURLY=0 turns it off.
     if os.environ.get("CATCHUP_HOURLY") != "0":
         from apscheduler.triggers.interval import IntervalTrigger
-        sched.add_job(_maybe_catch_up, IntervalTrigger(hours=1), id="catch_up_check",
+        sched.add_job(_maybe_catch_up, IntervalTrigger(minutes=15), id="catch_up_check",
                       max_instances=1, coalesce=True)
     sched.start()
     app.state.scheduler = sched

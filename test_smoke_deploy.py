@@ -319,3 +319,96 @@ def test_nightly_job_has_misfire_grace(monkeypatch):
         assert job.coalesce is True
     finally:
         api.app.state.scheduler.shutdown(wait=False)
+
+
+# â”€â”€ a slept-through nightly slot (#63) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+def _slot_env(monkeypatch, tmp_path):
+    monkeypatch.setattr(api, "DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("CATCHUP_ON_START", raising=False)
+    monkeypatch.delenv("CATCHUP_AFTER_HOURS", raising=False)
+    monkeypatch.delenv("PIPELINE_MISFIRE_GRACE_HOURS", raising=False)
+    monkeypatch.setenv("PIPELINE_TZ", "America/New_York")
+    monkeypatch.setenv("PIPELINE_HOUR", "22")
+
+
+def _ny(*a):
+    from zoneinfo import ZoneInfo
+    from datetime import datetime
+    return datetime(*a, tzinfo=ZoneInfo("America/New_York"))
+
+
+def _write_run(tmp_path, started, finished):
+    import json as _json
+    (tmp_path / "fundamentals.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "last_run.json").write_text(
+        _json.dumps({"started_at": started.isoformat(), "finished_at": finished.isoformat(),
+                     "ok": True, "steps": []}), encoding="utf-8")
+
+
+def test_catch_up_runs_a_slept_through_slot(monkeypatch, tmp_path, _stub_pipeline):
+    # 2026-10-19: last run 22:00-23:47 the night before; asleep at 22:00; awake 22:10.
+    _slot_env(monkeypatch, tmp_path)
+    _write_run(tmp_path, _ny(2026, 10, 18, 22), _ny(2026, 10, 18, 23, 47))
+    t = api._maybe_catch_up(now=_ny(2026, 10, 19, 22, 10))
+    assert t is not None            # 22h23m since the last finish: the 26h rule alone would wait
+    t.join(timeout=5)
+    assert _stub_pipeline == [1]
+
+
+def test_catch_up_skips_when_tonights_run_started(monkeypatch, tmp_path, _stub_pipeline):
+    _slot_env(monkeypatch, tmp_path)
+    _write_run(tmp_path, _ny(2026, 10, 19, 22), _ny(2026, 10, 19, 22, 5))
+    assert api._maybe_catch_up(now=_ny(2026, 10, 19, 22, 10)) is None
+    assert _stub_pipeline == []
+
+
+def test_past_the_grace_window_only_the_26h_rule_applies(monkeypatch, tmp_path, _stub_pipeline):
+    _slot_env(monkeypatch, tmp_path)
+    # Slot 22:00, now 05:00 next morning: 7h, past the 6h grace. The last run
+    # (started before the slot) finished 5h ago, so the 26h rule waits too.
+    _write_run(tmp_path, _ny(2026, 10, 19, 21), _ny(2026, 10, 20, 0))
+    assert api._maybe_catch_up(now=_ny(2026, 10, 20, 5)) is None
+    assert _stub_pipeline == []
+    # ...and a 30h-old run still catches up under the 26h rule.
+    _write_run(tmp_path, _ny(2026, 10, 18, 21), _ny(2026, 10, 18, 23))
+    t = api._maybe_catch_up(now=_ny(2026, 10, 20, 5))
+    assert t is not None
+    t.join(timeout=5)
+
+
+def test_last_slot_is_tonight_after_the_hour_and_yesterday_before_it(monkeypatch):
+    monkeypatch.setenv("PIPELINE_TZ", "America/New_York")
+    monkeypatch.setenv("PIPELINE_HOUR", "22")
+    assert api._last_slot(_ny(2026, 10, 19, 22, 10)) == _ny(2026, 10, 19, 22)
+    assert api._last_slot(_ny(2026, 10, 19, 21, 59)) == _ny(2026, 10, 18, 22)
+
+
+def test_late_cron_fire_after_catch_up_does_not_run_twice(monkeypatch, tmp_path, _stub_pipeline):
+    # The cron timer fires late after a sleep; catch-up already ran tonight.
+    _slot_env(monkeypatch, tmp_path)
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    _write_run(tmp_path, now, now)          # a run started just now, after any slot
+    api._nightly()
+    assert _stub_pipeline == []
+
+
+def test_cron_fire_runs_when_nothing_started_since_the_slot(monkeypatch, tmp_path, _stub_pipeline):
+    _slot_env(monkeypatch, tmp_path)
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc)
+    monkeypatch.setenv("PIPELINE_MISFIRE_GRACE_HOURS", "25")   # whatever time the test runs
+    _write_run(tmp_path, now - timedelta(days=2), now - timedelta(days=2))
+    api._nightly()
+    assert _stub_pipeline == [1]
+
+
+def test_catch_up_check_runs_every_15_minutes(monkeypatch):
+    sched = _scheduler_with(monkeypatch)
+    try:
+        trig = sched.get_job("catch_up_check").trigger
+        assert trig.interval.total_seconds() == 15 * 60
+        assert sched.get_job("nightly_pipeline").func is api._nightly
+    finally:
+        sched.shutdown(wait=False)
