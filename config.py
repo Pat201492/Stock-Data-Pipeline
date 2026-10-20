@@ -72,6 +72,11 @@ FRED_API_KEY = os.environ.get("FRED_API_KEY")
 
 # ── Other collector knobs ───────────────────────────────────────────────────
 OPTIONS_TOP_N   = int(os.environ.get("OPTIONS_TOP_N", "25"))
+# Index ETF proxies kept in price_history beside the stock universe (#65): most
+# structured-note issuance is on the Russell 2000 / Nasdaq-100 / S&P 500 / Dow,
+# which the stock universe never contains.
+INDEX_PROXIES   = [t.strip().upper() for t in
+                   (os.environ.get("INDEX_PROXIES") or "SPY,QQQ,IWM,DIA").split(",") if t.strip()]
 OPTIONS_MAX_EXP = int(os.environ.get("OPTIONS_MAX_EXP", "6"))
 EXPOSURE_COMPUTE = os.environ.get("EXPOSURE_COMPUTE") == "1"
 RUN_SCHEDULER    = os.environ.get("RUN_SCHEDULER") == "1"

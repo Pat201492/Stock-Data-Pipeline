@@ -21,7 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 import config
-from database import SessionLocal, News, PriceHistory, ETF, ETFHolding
+from database import SessionLocal, News, PriceHistory, ETF, ETFHolding, OptionsOIHistory
 from serializers import db_columns
 from sqlalchemy import and_, func, not_, or_
 from politicians_database import InsiderTrade, SessionLocal as PolSession
@@ -528,6 +528,34 @@ def macro():
 
 
 # ── Options ───────────────────────────────────────────────────────────────────
+# Registered before /api/options/{ticker}, which would otherwise take
+# "oi-history" as a ticker.
+@app.get("/api/options/oi-history")
+def options_oi_history(ticker: Optional[str] = None, from_: Optional[str] = Query(None, alias="from"),
+                       to: Optional[str] = None, limit: int = Query(5000, ge=1, le=50000)):
+    """Point-in-time open interest, one row per ticker per day (#66), oldest
+    first. Filters: ticker, from/to (ISO dates, inclusive)."""
+    t = (ticker or "").strip().upper()
+    key = f"oi-history:{t}:{from_}:{to}:{limit}"
+
+    def build():
+        db = SessionLocal()
+        try:
+            q = db.query(OptionsOIHistory)
+            if t:
+                q = q.filter(OptionsOIHistory.ticker == t)
+            if from_:
+                q = q.filter(OptionsOIHistory.date >= from_)
+            if to:
+                q = q.filter(OptionsOIHistory.date <= to)
+            rows = q.order_by(OptionsOIHistory.date, OptionsOIHistory.ticker).limit(limit).all()
+            return {"count": len(rows), "rows": [_serialize(r, OptionsOIHistory, drop=()) for r in rows]}
+        finally:
+            db.close()
+
+    return _db_cached(key, build)
+
+
 @app.get("/api/options/{ticker}")
 def options_summary(ticker: str):
     d = _load("options.json") or {}

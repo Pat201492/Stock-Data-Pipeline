@@ -197,9 +197,37 @@ def _process_ticker(sym, r, q):
         "put_call_oi": round(put_oi / call_oi, 3) if call_oi else None,
         "put_call_vol": round(put_vol / call_vol, 3) if call_vol else None,
         "total_oi": call_oi + put_oi,
+        "call_oi": call_oi,
+        "put_oi": put_oi,
         "n_expirations": len(exp_out),
     }
     return {"summary": summary, "expirations": exp_out}
+
+
+def record_oi_history(out, db=None):
+    """Append today's per-ticker open interest to options_oi_history (#66). One
+    row per (ticker, asof); a re-run the same day replaces that day's row.
+    Returns the number of rows written."""
+    from database import SessionLocal, OptionsOIHistory, init_db
+    own = db is None
+    if own:
+        init_db()
+        db = SessionLocal()
+    n = 0
+    try:
+        for sym, rec in (out or {}).items():
+            s, asof = (rec or {}).get("summary") or {}, (rec or {}).get("asof")
+            if not asof or s.get("total_oi") is None:
+                continue
+            db.merge(OptionsOIHistory(ticker=sym, date=asof, call_oi=s.get("call_oi"),
+                                      put_oi=s.get("put_oi"), total_oi=s.get("total_oi"),
+                                      spot=s.get("spot"), atm_iv=s.get("atm_iv")))
+            n += 1
+        db.commit()
+    finally:
+        if own:
+            db.close()
+    return n
 
 
 def main():
@@ -240,6 +268,10 @@ def main():
         with open(OUT, "w") as f:
             json.dump(out, f, indent=2)
         print(f"\n✅ Wrote options for {len(out)} tickers → {OUT}")
+        try:
+            print(f"   OI history: {record_oi_history(out)} row(s) for {asof}")
+        except Exception as e:      # history must never fail the options step
+            print(f"   ⚠️  OI history not recorded: {e}")
 
 
 if __name__ == "__main__":
