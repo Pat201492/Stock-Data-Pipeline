@@ -3,6 +3,8 @@ news.py — Fetch news and sentiment for stocks in the database
 """
 import math, time, warnings
 from datetime import datetime
+
+import config
 warnings.filterwarnings("ignore")
 
 from yf_client import yf_ticker, is_empty, EmptyUpstreamResponse, tolerate_empties
@@ -167,6 +169,7 @@ def main(tickers=None, limit_per_ticker=10):
     init_db()
     db = SessionLocal()
 
+    explicit = tickers is not None
     if tickers is None:
         rows = db.query(Stock.ticker).order_by(Stock.rank).limit(1500).all()
         tickers = [r.ticker for r in rows]
@@ -189,6 +192,17 @@ def main(tickers=None, limit_per_ticker=10):
                 fetch_and_store_prices(ticker, db)
             except EmptyUpstreamResponse:
                 price_empty += 1
+        time.sleep(0.3)
+
+    # Index ETF proxies (#65): prices only -- no news, and never counted as
+    # universe tickers. Skipped when an explicit ticker list was passed.
+    proxies = [] if explicit else _tickers_needing_prices(
+        [t for t in config.INDEX_PROXIES if t not in tickers], db)
+    for ticker in proxies:
+        try:
+            fetch_and_store_prices(ticker, db)
+        except EmptyUpstreamResponse:
+            print(f"  index proxy {ticker}: empty price history")
         time.sleep(0.3)
 
     db.close()

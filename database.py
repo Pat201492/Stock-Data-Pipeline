@@ -191,6 +191,21 @@ class PriceHistory(Base):
     __table_args__ = {"sqlite_with_rowid": False}
 
 
+class OptionsOIHistory(Base):
+    """One row per options ticker per day (#66). options.json is overwritten
+    nightly, so without this there is no point-in-time open interest -- and
+    matching a past date on today's OI leaks the future."""
+    __tablename__ = "options_oi_history"
+    ticker       = Column(String, primary_key=True)
+    date         = Column(String, primary_key=True)   # the options snapshot's asof (UTC date)
+    call_oi      = Column(Integer)
+    put_oi       = Column(Integer)
+    total_oi     = Column(Integer)
+    spot         = Column(Float)
+    atm_iv       = Column(Float)
+    __table_args__ = {"sqlite_with_rowid": False}
+
+
 class ETF(Base):
     __tablename__ = "etfs"
     ticker         = Column(String, primary_key=True)
