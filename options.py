@@ -204,6 +204,56 @@ def _process_ticker(sym, r, q):
     return {"summary": summary, "expirations": exp_out}
 
 
+def oi_snapshot(sym):
+    """Spot and call/put open interest summed over the first MAX_EXP
+    expirations -- the same OI the watchlist summary carries, without Greeks
+    or chain rows (#68). None when the ticker has no options or no spot."""
+    tk = yf_ticker(sym)
+    spot = None
+    try:
+        fi = tk.fast_info
+        spot = fi.get("last_price") or fi.get("lastPrice")
+    except Exception:
+        spot = None
+    expirations = list(getattr(tk, "options", []) or [])[:MAX_EXP]
+    if not expirations or not spot:
+        return None
+    call_oi = put_oi = read = 0
+    for exp in expirations:
+        try:
+            chain = tk.option_chain(exp)
+        except Exception:
+            continue
+        read += 1
+        call_oi += int(sum(_i(x) for x in chain.calls.get("openInterest", [])))
+        put_oi += int(sum(_i(x) for x in chain.puts.get("openInterest", [])))
+    if not read:
+        return None     # every chain failed: zero OI would be a fabricated figure
+    return {"spot": round(float(spot), 2), "atm_iv": None, "call_oi": call_oi, "put_oi": put_oi,
+            "total_oi": call_oi + put_oi}
+
+
+def record_extra_oi(extra, done, asof, snapshot=None, record=None):
+    """Snapshot OI for every ticker in `extra` not already in `done` (the
+    watchlist output) and record it. A ticker that fails is skipped. Returns
+    {"recorded": n, "skipped": [syms]}."""
+    snapshot = snapshot or oi_snapshot
+    record = record or record_oi_history
+    out, skipped = {}, []
+    for sym in extra:
+        if sym in done:
+            continue
+        try:
+            s = snapshot(sym)
+        except Exception:
+            s = None
+        if s:
+            out[sym] = {"asof": asof, "summary": s}
+        else:
+            skipped.append(sym)
+    return {"recorded": record(out) if out else 0, "skipped": skipped}
+
+
 def record_oi_history(out, db=None):
     """Append today's per-ticker open interest to options_oi_history (#66). One
     row per (ticker, asof); a re-run the same day replaces that day's row.
@@ -270,6 +320,9 @@ def main():
         print(f"\n✅ Wrote options for {len(out)} tickers → {OUT}")
         try:
             print(f"   OI history: {record_oi_history(out)} row(s) for {asof}")
+            extra = record_extra_oi(config.OI_EXTRA_TICKERS, out, asof)
+            print(f"   OI history (extra tickers): {extra['recorded']} row(s)"
+                  + (f", skipped {extra['skipped']}" if extra["skipped"] else ""))
         except Exception as e:      # history must never fail the options step
             print(f"   ⚠️  OI history not recorded: {e}")
 

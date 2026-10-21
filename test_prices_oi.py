@@ -143,3 +143,49 @@ def test_oi_history_route_filters():
     assert [(x["ticker"], x["call_oi"]) for x in r["rows"]] == [("NVDA", 120)]
     # The literal route is not swallowed by /api/options/{ticker}.
     assert "rows" in client.get("/api/options/oi-history").json()
+
+
+# -- #68: OI for tickers beyond the options watchlist ------------------------
+class _FakeChainTicker:
+    def __init__(self, sym, fail=False):
+        self.sym, self.fail = sym, fail
+        self.fast_info = {"last_price": 101.5}
+        self.options = ["2026-11-20", "2026-12-18"]
+
+    def option_chain(self, exp):
+        if self.fail:
+            raise RuntimeError("no chain")
+        import types
+        return types.SimpleNamespace(calls=pd.DataFrame({"openInterest": [10, 20, float("nan")]}),
+                                     puts=pd.DataFrame({"openInterest": [5, 5]}))
+
+
+def test_oi_snapshot_sums_call_and_put_oi(monkeypatch):
+    monkeypatch.setattr(options, "yf_ticker", lambda s: _FakeChainTicker(s))
+    s = options.oi_snapshot("NBIS")
+    assert s == {"spot": 101.5, "atm_iv": None, "call_oi": 60, "put_oi": 20, "total_oi": 80}
+
+
+def test_extra_tickers_recorded_not_in_watchlist_and_skips_failures(monkeypatch):
+    monkeypatch.setattr(options, "yf_ticker", lambda s: _FakeChainTicker(s, fail=(s == "BAD")))
+    done = {"NVDA": {"asof": "2026-10-21", "summary": {"total_oi": 1}}}
+    res = options.record_extra_oi(["NVDA", "NBIS", "BAD", "SPY"], done, "2026-10-21")
+    assert res == {"recorded": 2, "skipped": ["BAD"]}      # every chain failed: no fake zero row
+    db = SessionLocal()
+    try:
+        got = {r.ticker: r.total_oi for r in db.query(OptionsOIHistory).filter(OptionsOIHistory.date == "2026-10-21")}
+    finally:
+        db.close()
+    assert "NVDA" not in got and got["NBIS"] == 80 and got["SPY"] == 80
+
+
+def test_extra_ticker_without_options_is_skipped(monkeypatch):
+    t = _FakeChainTicker("X")
+    t.options = []
+    monkeypatch.setattr(options, "yf_ticker", lambda s: t)
+    res = options.record_extra_oi(["X"], {}, "2026-10-21")
+    assert res == {"recorded": 0, "skipped": ["X"]}
+
+
+def test_extra_list_defaults_to_the_dealer_hedging_names():
+    assert len(config.OI_EXTRA_TICKERS) == 51 and {"SPY", "NVDA", "RIVN"} <= set(config.OI_EXTRA_TICKERS)

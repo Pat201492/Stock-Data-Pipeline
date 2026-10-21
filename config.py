@@ -77,6 +77,12 @@ OPTIONS_TOP_N   = int(os.environ.get("OPTIONS_TOP_N", "25"))
 # which the stock universe never contains.
 INDEX_PROXIES   = [t.strip().upper() for t in
                    (os.environ.get("INDEX_PROXIES") or "SPY,QQQ,IWM,DIA").split(",") if t.strip()]
+# Tickers that get a nightly open-interest snapshot beyond the options
+# watchlist (#68): point-in-time OI for Trader-Screener's dealer-hedging test,
+# whose 51 underlyings the 25-ticker watchlist mostly misses.
+OI_EXTRA_TICKERS = [t.strip().upper() for t in
+                    (os.environ.get("OI_EXTRA_TICKERS") or
+                     "IWM,QQQ,SPY,DIA,NVDA,TSLA,AAPL,AMZN,MSFT,META,GOOGL,AMD,AVGO,NFLX,PLTR,COIN,MSTR,INTC,MU,ORCL,UBER,CRM,NOW,BA,XOM,WMT,COST,LLY,UNH,HOOD,RDDT,CEG,DELL,SMCI,SHOP,CRWD,NEE,DIS,NKE,PYPL,QCOM,ADBE,ARM,CVX,V,MA,NBIS,APP,VST,SOFI,RIVN").split(",") if t.strip()]
 OPTIONS_MAX_EXP = int(os.environ.get("OPTIONS_MAX_EXP", "6"))
 EXPOSURE_COMPUTE = os.environ.get("EXPOSURE_COMPUTE") == "1"
 RUN_SCHEDULER    = os.environ.get("RUN_SCHEDULER") == "1"
